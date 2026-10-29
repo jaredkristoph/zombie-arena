@@ -69,13 +69,14 @@ global.document = {
   body, activeElement: body,
   getElementById(id) { if (!ids.has(id)) throw new Error('index.html has no #' + id); if (!els.has(id)) els.set(id, new El(id === 'chatinput' || id === 'name' || id.startsWith('c-') ? (id === 'c-map' || id === 'c-diff' ? 'select' : 'input') : 'div', id)); return els.get(id); },
   createElement: (t) => new El(t),
+  createTextNode: (t) => Object.assign(new El('span'), { _txt: String(t) }),
 };
 const winHandlers = {};
 global.window = global;
 global.addEventListener = (t, f) => { (winHandlers[t] = winHandlers[t] || []).push(f); };
 global.innerWidth = 1280; global.innerHeight = 720; global.devicePixelRatio = 1;
 global.localStorage = { _d: {}, getItem(k) { return this._d[k] || null; }, setItem(k, v) { this._d[k] = String(v); } };
-global.location = { protocol: 'http:', host: 'x' };
+global.location = { protocol: 'http:', host: 'x', pathname: '/create', search: '' };
 global.WebSocket = WebSocket;
 let rafCb = null;
 global.requestAnimationFrame = (cb) => { rafCb = cb; };
@@ -106,7 +107,13 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   fire('keydown', { code: 'ArrowRight' });
   assert.strictEqual($('acc-name').textContent, 'Cowboy Hat');
   fire('keydown', { code: 'ArrowLeft' }); fire('keydown', { code: 'ArrowLeft' }); fire('keydown', { code: 'ArrowLeft' });
-  assert.strictEqual($('acc-name').textContent, 'Wizard Hat', 'wraps around');
+  assert.strictEqual($('acc-name').textContent, 'Pumpkin', 'wraps around');
+  fire('keydown', { code: 'ArrowDown' });
+  assert.strictEqual($('fit-name').textContent, 'Hoodie');
+  $('fit-prev').onclick(); $('fit-prev').onclick();
+  assert.strictEqual($('fit-name').textContent, 'Ninja', 'outfit wraps');
+  $('rand-look').onclick();
+  assert.ok($('acc-name').textContent && $('fit-name').textContent, 'randomize works');
   console.log('  ok  menu: character preview, accessory buttons + arrow keys');
   $('name').value = 'Tester';
   $('c-name').value = 'Smoke room'; $('c-waves').value = '3'; $('c-max').value = '4'; $('c-diff').value = 'easy';
@@ -215,6 +222,9 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   $('btn-leave').onclick();
   await until(() => body.classList.contains('screen-menu'));
   $('c-mode').value = 'pvp'; $('c-mode').onchange();
+  assert.ok($('c-weapons').children.length >= 8 && $('c-start').children.length >= 8, 'weapon picker lists guns and swords');
+  assert.ok($('c-weapons').children.some((l) => /Sword/.test(l.textContent)), 'swords listed');
+  assert.ok($('c-drop-l').style.display === '', 'pvp shows the death-drop option');
   assert.ok($('c-waves-l').style.display === 'none' && $('c-kills-l').style.display === '', 'pvp form shows kill limit');
   $('c-name').value = 'PvP room'; $('c-kills').value = '5'; $('c-max').value = '4';
   $('btn-create').onclick();
@@ -242,6 +252,7 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   prm.die(pme, pbot);
   await stepFrames(400);
   assert.ok(/KILLED/.test($('deadbox').innerHTML) && /class="rs">(9|10)</.test($('deadbox').innerHTML), 'respawn countdown shown: ' + $('deadbox').innerHTML);
+  assert.ok(/Watching: Bot/.test($('deadbox').innerHTML), 'spectating a living player: ' + $('deadbox').innerHTML);
   pme.rs = 0.05;
   await stepFrames(500);
   assert.ok(!pme.dead && $('deadbox').style.display === 'none', 'respawned and overlay hidden');

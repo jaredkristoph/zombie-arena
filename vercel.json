@@ -3,5 +3,6 @@
   "framework": null,
   "buildCommand": null,
   "installCommand": null,
-  "outputDirectory": "client"
+  "outputDirectory": "client",
+  "rewrites": [{ "source": "/create", "destination": "/index.html" }]
 }

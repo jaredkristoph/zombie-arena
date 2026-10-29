@@ -114,6 +114,15 @@ body.screen-menu #chatlog, body.screen-room #chatlog { max-height: 140px; }
 body.screen-over #chatinput { display: block; }
 @media (max-width: 700px) { #help { display: none; } #hp-bar { width: 160px; } }
 
+/* beta: room creation only on /create */
+#create-card { display: none; } body.can-create #create-card { display: block; }
+.beta { background: var(--yellow); color: #000; font-size: 11px; padding: 2px 8px; border-radius: 999px; vertical-align: middle; margin-left: 6px; }
+#stam-bar { width: 240px; height: 9px; background: #000a; border: 2px solid #fff3; border-radius: 6px; overflow: hidden; }
+#stam-fill { height: 100%; width: 100%; background: linear-gradient(#ffe27a, #ffb703); } #stam-fill.exh { background: #c0392b; }
+#armor-bar { width: 240px; height: 10px; background: #000a; border: 2px solid #fff3; border-radius: 6px; overflow: hidden; }
+#armor-fill { height: 100%; width: 0; background: linear-gradient(#8fe3ff, #4cc9f0); }
+.fit-row { display: flex; align-items: center; gap: 8px; } .arrow.sm { width: 32px; height: 32px; font-size: 13px; border-radius: 10px; }
+#rand-look { padding: 8px 16px; margin-top: 2px; }
 /* character preview + head accessory picker */
 .char-slot { display: flex; justify-content: center; }
 .charbox { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 6px 0 4px; }
@@ -122,3 +131,16 @@ body.screen-over #chatinput { display: block; }
 .arrow { width: 40px; height: 56px; padding: 0; font-size: 18px; border-radius: 12px; }
 .acc-label { font-weight: 700; } .acc-label b { color: var(--yellow); }
 #ammo-info { margin-left: 12px; color: var(--yellow); } #ammo-info.low { color: var(--pink); }
+
+.wgrid { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.wgrid label { display: flex; align-items: center; gap: 6px; background: #1a1440; border: 2px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.wgrid input, label.chk input { width: auto; margin: 0; }
+label.chk { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 14px; font-weight: 700; cursor: pointer; }
+#deadbox .spec { display: block; color: var(--yellow); font-size: 18px; margin-top: 8px; }
+
+/* arrows sit outside the preview box: hat arrows level with the head, outfit arrows level with the body */
+.arrow-col { height: 192px; display: flex; flex-direction: column; gap: 30px; padding-top: 18px; }
+.arrow-col .arrow { width: 40px; height: 44px; font-size: 16px; border-radius: 12px; }
+.arrow.hat { background: var(--yellow); color: #3a2a00; box-shadow: 0 3px 0 #b8860b; }
+.arrow.fit { background: var(--blue); color: #00263a; box-shadow: 0 3px 0 #1b6a8f; }
+.acc-label { font-size: 14px; }

@@ -11,6 +11,8 @@ export function lerpAngle(a, b, f) {
 
 export const PLAYER_R = 0.38;
 export const PLAYER_SPEED = 5.2;
+// sprint (keep in sync with server/game.js)
+export const STAM_MAX = 100, SPRINT_MULT = 1.4, SPRINT_DRAIN = 30, STAM_REGEN = 14, SPRINT_DELAY = 1, STAM_RESUME = 30;
 
 export function makeGrid(map) {
   const g = { w: map.w, h: map.h, solid: new Uint8Array(map.w * map.h) };

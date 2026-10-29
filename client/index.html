@@ -21,11 +21,13 @@
     <div id="hud-players"></div>
     <div id="hud-bottom">
       <div id="hp-wrap"><div id="hp-bar"><div id="hp-fill"></div></div><div id="hp-text">100</div></div>
+      <div id="armor-bar" style="display:none"><div id="armor-fill"></div></div>
+      <div id="stam-bar"><div id="stam-fill"></div></div>
       <div id="gear"><span id="weapon-name">Pistol</span><span id="ammo-info"></span><span id="bag-info"></span></div>
     </div>
     <div id="prompt"></div>
     <div id="deadbox"></div>
-    <div id="help">WASD / Arrows move &middot; MOUSE aim &middot; SPACE / CLICK shoot (limited ammo - grab ammo packs) &middot; E equip &middot; Q drop gun &middot; H heal &middot; G drop heal &middot; ENTER chat &middot; M mute</div>
+    <div id="help">WASD / Arrows move &middot; SHIFT sprint (stamina) &middot; MOUSE aim &middot; SPACE / CLICK shoot (limited ammo - grab ammo packs) &middot; E equip &middot; Q drop gun &middot; H heal &middot; G drop heal &middot; ENTER chat &middot; M mute</div>
     <div id="ping"></div>
     <div id="hurt"></div>
     <div id="toast"></div>
@@ -41,19 +43,27 @@
         <div id="slot-menu" class="char-slot">
         <div id="char-box" class="charbox">
           <div class="char-view">
-            <button id="acc-prev" class="arrow" title="Previous head accessory (Left arrow key)">&#9664;</button>
+            <div class="arrow-col">
+              <button id="acc-prev" class="arrow hat" title="Previous hat (Left arrow key)">&#9664;</button>
+              <button id="fit-prev" class="arrow fit" title="Previous outfit (Up arrow key)">&#9664;</button>
+            </div>
             <canvas id="preview" width="200" height="240"></canvas>
-            <button id="acc-next" class="arrow" title="Next head accessory (Right arrow key)">&#9654;</button>
+            <div class="arrow-col">
+              <button id="acc-next" class="arrow hat" title="Next hat (Right arrow key)">&#9654;</button>
+              <button id="fit-next" class="arrow fit" title="Next outfit (Down arrow key)">&#9654;</button>
+            </div>
           </div>
-          <div class="acc-label">Head: <b id="acc-name">None</b></div>
-          <div class="tiny">&larr; / &rarr; to change your look</div>
+          <div class="acc-label">Hat: <b id="acc-name">None</b></div>
+          <div class="acc-label">Outfit: <b id="fit-name">Team Colour</b></div>
+          <button id="rand-look" class="ghost">&#127922; Randomize look</button>
+          <div class="tiny">&larr; &rarr; hat &middot; &uarr; &darr; outfit</div>
         </div>
         </div>
         <h2>Open rooms</h2>
         <div id="rooms" class="list"><div class="empty">Connecting...</div></div>
       </div>
-      <div class="card">
-        <h2>Create a room</h2>
+      <div class="card" id="create-card">
+        <h2>Create a room <span class="beta">BETA</span></h2>
         <label>Room name <input id="c-name" maxlength="22" placeholder="My room" autocomplete="off"></label>
         <label>Map <select id="c-map"></select></label>
         <label>Mode
@@ -76,6 +86,10 @@
             <option value="nightmare">Nightmare</option>
           </select>
         </label>
+        <div class="tiny" style="margin-top:6px">Weapons allowed in this room (tick the ones players can use)</div>
+        <div id="c-weapons" class="wgrid"></div>
+        <label>Everyone starts with <select id="c-start"></select></label>
+        <label id="c-drop-l" class="chk" style="display:none"><input type="checkbox" id="c-drop" checked> When a player dies, a random item (gun / heal / ammo) falls</label>
         <button id="btn-create" class="big">Create room</button>
       </div>
     </div>

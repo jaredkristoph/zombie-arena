@@ -9,6 +9,11 @@ const DEFAULT_ITEMS = [
   { id: 'sniper', name: 'Sniper', type: 'weapon', builtin: true, damage: 130, rate: 0.8, range: 32, pellets: 1, spread: 0, pierce: 3, color: '#9b5de5' },
   { id: 'bandage', name: 'Bandage', type: 'heal', builtin: true, heal: 25, color: '#f1f1f1' },
   { id: 'medkit', name: 'Medkit', type: 'heal', builtin: true, heal: 60, color: '#ff4d4d' },
+  { id: 'sword', name: 'Sword', type: 'weapon', melee: true, builtin: true, damage: 40, rate: 2.3, range: 2.2, arc: 1.8, pellets: 1, spread: 0, pierce: 0, color: '#c9d6df' },
+  { id: 'katana', name: 'Katana', type: 'weapon', melee: true, builtin: true, damage: 26, rate: 4, range: 2.5, arc: 1.4, pellets: 1, spread: 0, pierce: 0, color: '#e0e7ff' },
+  { id: 'greatsword', name: 'Greatsword', type: 'weapon', melee: true, builtin: true, damage: 90, rate: 1.1, range: 2.9, arc: 2.3, pellets: 1, spread: 0, pierce: 0, color: '#f4a261' },
+  { id: 'vest', name: 'Light Vest', type: 'armor', builtin: true, amount: 40, color: '#4cc9f0' },
+  { id: 'plate', name: 'Heavy Armor', type: 'armor', builtin: true, amount: 80, color: '#9d4edd' },
   { id: 'ammo', name: 'Ammo Pack', type: 'ammo', builtin: true, amount: 40, color: '#ffd23f' },
 ];
 
@@ -95,17 +100,21 @@ function sanitizeItem(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('Bad item');
   const name = cleanName(raw.name, 20);
   if (!name) throw new Error('Item needs a name');
-  const type = raw.type === 'heal' ? 'heal' : raw.type === 'ammo' ? 'ammo' : 'weapon';
+  const type = raw.type === 'heal' ? 'heal' : raw.type === 'ammo' ? 'ammo' : raw.type === 'armor' ? 'armor' : 'weapon';
   const id = validId(raw.id) ? raw.id : (slug(name) || 'item') + '-' + Math.random().toString(36).slice(2, 6);
   const color = /^#[0-9a-f]{6}$/i.test(raw.color || '') ? raw.color : '#ffffff';
+  if (type === 'armor') return { id, name, type, amount: Math.round(num(raw.amount, 1, 100, 40)), color };
   if (type === 'ammo') return { id, name, type, amount: Math.round(num(raw.amount, 1, 240, 40)), color };
   if (type === 'heal') return { id, name, type, heal: Math.round(num(raw.heal, 1, 200, 30)), color };
-  return {
+  const melee = !!raw.melee;
+  const out = {
     id, name, type, color,
     damage: num(raw.damage, 1, 500, 20), rate: num(raw.rate, 0.2, 20, 3),
-    range: num(raw.range, 3, 40, 14), pellets: Math.round(num(raw.pellets, 1, 16, 1)),
+    range: num(raw.range, melee ? 1 : 3, 40, melee ? 2.2 : 14), pellets: Math.round(num(raw.pellets, 1, 16, 1)),
     spread: num(raw.spread, 0, 0.8, 0.05), pierce: Math.round(num(raw.pierce, 0, 5, 0)),
   };
+  if (melee) { out.melee = true; out.arc = num(raw.arc, 0.5, 3.2, 1.8); out.range = Math.min(out.range, 4); }
+  return out;
 }
 
 function sanitizeMap(raw) {

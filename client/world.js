@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { lerpAngle } from './util.js';
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
+const RING_GEO = new THREE.RingGeometry(0.42, 0.56, 24).rotateX(-Math.PI / 2);
 const SHADOW_GEO = new THREE.CircleGeometry(0.5, 16).rotateX(-Math.PI / 2);
 const SHADOW_MAT = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false });
 const matCache = new Map();
@@ -25,7 +26,7 @@ function darken(hex, f) {
 
 let renderer, scene, camera, worldGroup, entGroup, particles, W = 1, H = 1;
 const players = new Map(), zombies = new Map(), groundViews = new Map(), graveViews = new Map();
-const tracers = [];
+const tracers = [], slashes = [];
 const cam = { x: 0, y: 0, shake: 0 };
 const P = { n: 260, i: 0, pos: null, vel: null, life: null, max: null, size: null };
 const dummy = new THREE.Object3D();
@@ -49,6 +50,12 @@ export function init(canvas) {
     m.visible = false; m.frustumCulled = false;
     scene.add(m);
     tracers.push({ mesh: m, life: 0 });
+  }
+  for (let i = 0; i < 6; i++) {
+    const m = new THREE.Mesh(new THREE.RingGeometry(0.5, 1, 8).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }));
+    m.visible = false; m.frustumCulled = false;
+    scene.add(m);
+    slashes.push({ mesh: m, life: 0 });
   }
   particles = new THREE.InstancedMesh(BOX, new THREE.MeshBasicMaterial({ color: 0xffffff }), P.n);
   particles.frustumCulled = false;
@@ -141,7 +148,7 @@ function clearMap() {
 
 // ---------- characters ----------
 // Head accessories. Keep ACC_NAMES in the same order/length as ACC_COUNT in server/game.js.
-export const ACC_NAMES = ['None', 'Cap', 'Cowboy Hat', 'Top Hat', 'Crown', 'Headband', 'Bunny Ears', 'Devil Horns', 'Halo', 'Army Helmet', 'Mohawk', 'Antenna', 'Pirate Hat', 'Wizard Hat'];
+export const ACC_NAMES = ['None', 'Cap', 'Cowboy Hat', 'Top Hat', 'Crown', 'Headband', 'Bunny Ears', 'Devil Horns', 'Halo', 'Army Helmet', 'Mohawk', 'Antenna', 'Pirate Hat', 'Wizard Hat', 'Beanie', 'Chef Hat', 'Viking Helmet', 'Cat Ears', 'Sombrero', 'Police Cap', 'Flower Crown', 'Jester Hat', 'Headphones', 'Unicorn', 'Pumpkin'];
 function accessoryParts(i, color) {
   const b = box;
   switch (i) {
@@ -158,22 +165,54 @@ function accessoryParts(i, color) {
     case 11: return [b(0.04, 0.32, 0.04, '#aaaaaa', 0, 1.82, 0), b(0.13, 0.13, 0.13, '#3ae374', 0, 2.03, 0)];
     case 12: return [b(0.74, 0.14, 0.36, '#151515', 0, 1.7, 0), b(0.48, 0.12, 0.3, '#151515', 0, 1.8, 0), b(0.1, 0.1, 0.04, '#ffffff', 0, 1.7, 0.19)];
     case 13: return [b(0.72, 0.05, 0.72, '#5b2a86', 0, 1.65, 0), b(0.46, 0.2, 0.46, '#6c34a0', 0, 1.77, 0), b(0.32, 0.2, 0.32, '#6c34a0', 0, 1.97, 0), b(0.18, 0.2, 0.18, '#7d44b5', 0, 2.17, 0), b(0.48, 0.05, 0.48, '#ffd23f', 0, 1.69, 0)];
+    case 14: return [b(0.5, 0.2, 0.5, '#e63946', 0, 1.7, 0), b(0.54, 0.08, 0.54, '#b02a37', 0, 1.6, 0), b(0.13, 0.13, 0.13, '#ffffff', 0, 1.86, 0)];
+    case 15: return [b(0.5, 0.1, 0.5, '#f8f9fa', 0, 1.65, 0), b(0.58, 0.32, 0.58, '#ffffff', 0, 1.86, 0)];
+    case 16: return [b(0.54, 0.2, 0.54, '#9aa5b1', 0, 1.7, 0), b(0.58, 0.05, 0.58, '#6c757d', 0, 1.61, 0), ...[-1, 1].flatMap((x) => [b(0.1, 0.26, 0.1, '#f1e4c3', x * 0.31, 1.8, 0), b(0.1, 0.12, 0.1, '#f1e4c3', x * 0.37, 1.97, 0)])];
+    case 17: return [-1, 1].flatMap((x) => [b(0.15, 0.22, 0.1, '#2b2b2b', x * 0.15, 1.78, 0), b(0.07, 0.13, 0.11, '#ffb3c6', x * 0.15, 1.76, 0.01)]);
+    case 18: return [b(1.1, 0.05, 1.1, '#d4a017', 0, 1.65, 0), b(0.4, 0.3, 0.4, '#e0b030', 0, 1.82, 0), b(0.42, 0.06, 0.42, '#d62828', 0, 1.7, 0)];
+    case 19: return [b(0.54, 0.17, 0.54, '#1d3557', 0, 1.68, 0), b(0.5, 0.04, 0.24, '#111111', 0, 1.62, 0.36), b(0.09, 0.09, 0.04, '#ffd23f', 0, 1.7, 0.28)];
+    case 20: return [b(0.52, 0.05, 0.52, '#2d6a4f', 0, 1.62, 0), ...[[-0.25, 0], [0.25, 0], [0, -0.25], [0, 0.25], [-0.18, 0.18], [0.18, -0.18]].map(([x, z], k) => b(0.11, 0.11, 0.11, ['#ff70a6', '#ffd23f', '#ffffff'][k % 3], x, 1.67, z))];
+    case 21: return [b(0.2, 0.32, 0.2, '#e63946', -0.18, 1.8, 0), b(0.2, 0.32, 0.2, '#3a86ff', 0.18, 1.8, 0), b(0.5, 0.06, 0.5, '#ffd23f', 0, 1.62, 0), b(0.09, 0.09, 0.09, '#ffd23f', -0.18, 2.02, 0), b(0.09, 0.09, 0.09, '#ffd23f', 0.18, 2.02, 0)];
+    case 22: return [b(0.62, 0.06, 0.08, '#222222', 0, 1.67, 0), ...[-1, 1].flatMap((x) => [b(0.05, 0.34, 0.08, '#222222', x * 0.3, 1.5, 0), b(0.12, 0.24, 0.24, '#e63946', x * 0.33, 1.3, 0)])];
+    case 23: return [b(0.5, 0.1, 0.5, '#f8f9fa', 0, 1.66, 0), b(0.08, 0.32, 0.08, '#ffd23f', 0, 1.9, 0.1), b(0.1, 0.22, 0.3, '#ff70a6', 0, 1.76, -0.12), b(0.1, 0.16, 0.2, '#4cc9f0', 0, 1.72, -0.28)];
+    case 24: return [b(0.56, 0.34, 0.56, '#f97316', 0, 1.74, 0), b(0.09, 0.14, 0.09, '#2d6a4f', 0, 1.98, 0), b(0.1, 0.1, 0.04, '#2a1a05', -0.13, 1.76, 0.29), b(0.1, 0.1, 0.04, '#2a1a05', 0.13, 1.76, 0.29)];
     default: return [];
   }
 }
+
+// ---- outfits (shirt / pants / extras). 0 = your team colour. Keep FIT_NAMES.length == FIT_COUNT in server/game.js
+export const FIT_NAMES = ['Team Colour', 'Hoodie', 'Red Jacket', 'Camo', 'Striped Tee', 'Punk', 'Lab Coat', 'Knight', 'Overalls', 'Ninja'];
+function outfit(i, team) {
+  const b = box;
+  switch (i) {
+    case 1: return { shirt: '#2d6cdf', pants: '#2b2b44', parts: [b(0.5, 0.2, 0.12, '#2556b5', 0, 1.12, -0.22), b(0.3, 0.12, 0.04, '#2556b5', 0, 0.6, 0.21)] };
+    case 2: return { shirt: '#c0392b', pants: '#34495e', parts: [b(0.05, 0.7, 0.04, '#f1c40f', 0, 0.74, 0.21), b(0.5, 0.08, 0.42, '#962d22', 0, 1.1, 0)] };
+    case 3: return { shirt: '#5a6b3a', pants: '#4b5d3a', parts: [b(0.16, 0.14, 0.04, '#3b4a2e', -0.15, 0.9, 0.21), b(0.12, 0.16, 0.04, '#7d8f55', 0.12, 0.6, 0.21), b(0.14, 0.1, 0.04, '#3b4a2e', 0.05, 0.8, 0.21), b(0.18, 0.14, 0.24, '#3b4a2e', -0.14, 0.2, 0.0)] };
+    case 4: return { shirt: '#f8f9fa', pants: '#3a506b', parts: [0.58, 0.78, 0.96].map((y) => b(0.58, 0.07, 0.42, '#e63946', 0, y - 0.08, 0)) };
+    case 5: return { shirt: '#1b1b1b', pants: '#2d2d2d', parts: [b(0.1, 0.7, 0.04, '#ffd23f', 0.12, 0.74, 0.21), b(0.58, 0.07, 0.42, '#c0392b', 0, 0.42, 0), b(0.06, 0.06, 0.06, '#cccccc', -0.2, 1.02, 0.21), b(0.06, 0.06, 0.06, '#cccccc', -0.1, 1.02, 0.21)] };
+    case 6: return { shirt: '#f1f5f9', pants: '#cbd5e1', parts: [b(0.6, 0.42, 0.42, '#f1f5f9', 0, 0.3, 0), b(0.14, 0.1, 0.04, '#38bdf8', 0.15, 0.62, 0.21)] };
+    case 7: return { shirt: '#8d99ae', pants: '#4a4e69', parts: [b(0.2, 0.14, 0.3, '#adb5bd', -0.35, 1.06, 0), b(0.2, 0.14, 0.3, '#adb5bd', 0.35, 1.06, 0), b(0.5, 0.42, 0.04, '#ced4da', 0, 0.82, 0.21)] };
+    case 8: return { shirt: '#f4d35e', pants: '#2a6fdb', parts: [b(0.38, 0.36, 0.04, '#2a6fdb', 0, 0.62, 0.21), b(0.07, 0.42, 0.04, '#2a6fdb', -0.14, 0.95, 0.21), b(0.07, 0.42, 0.04, '#2a6fdb', 0.14, 0.95, 0.21)] };
+    case 9: return { shirt: '#15151f', pants: '#15151f', parts: [b(0.5, 0.1, 0.46, '#e63946', 0, 1.1, 0), b(0.1, 0.32, 0.06, '#e63946', 0.2, 0.9, -0.22), b(0.46, 0.2, 0.04, '#15151f', 0, 1.2, 0.23)] };
+    default: return { shirt: team, pants: '#2b2b44', parts: [] };
+  }
+}
 // builds one player model; `accGroup` holds the head accessory so it can be swapped later
-function buildPlayerModel(color, acc) {
+function buildPlayerModel(color, acc, fit = 0) {
   const root = new THREE.Group(), model = new THREE.Group(), accGroup = new THREE.Group();
-  root.add(shadow(0.5), model);
+  const ring = new THREE.Mesh(RING_GEO, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, depthWrite: false })); // team-colour ring so players stay identifiable
+  ring.position.y = 0.03;
+  root.add(shadow(0.5), ring, model);
   const skin = '#ffd9b3';
-  const legL = box(0.2, 0.42, 0.22, '#2b2b44', -0.14, 0.21, 0), legR = box(0.2, 0.42, 0.22, '#2b2b44', 0.14, 0.21, 0);
+  const o = outfit(fit, color);
+  const legL = box(0.2, 0.42, 0.22, o.pants, -0.14, 0.21, 0), legR = box(0.2, 0.42, 0.22, o.pants, 0.14, 0.21, 0);
   const gun = box(0.1, 0.14, 0.62, '#444444', 0.3, 0.86, 0.66);
   model.add(
-    legL, legR, box(0.56, 0.7, 0.4, color, 0, 0.74, 0), box(0.44, 0.44, 0.44, skin, 0, 1.3, 0),
+    legL, legR, box(0.56, 0.7, 0.4, o.shirt, 0, 0.74, 0), box(0.44, 0.44, 0.44, skin, 0, 1.3, 0),
     box(0.48, 0.14, 0.48, darken(color, 0.6), 0, 1.57, 0), box(0.15, 0.15, 0.5, skin, 0.3, 0.86, 0.3), gun,
-    box(0.06, 0.06, 0.04, '#222222', -0.1, 1.32, 0.23), box(0.06, 0.06, 0.04, '#222222', 0.1, 1.32, 0.23), accGroup,
+    box(0.06, 0.06, 0.04, '#222222', -0.1, 1.32, 0.23), box(0.06, 0.06, 0.04, '#222222', 0.1, 1.32, 0.23), accGroup, ...o.parts,
   );
-  const v = { root, model, legL, legR, gun, accGroup, gunColor: '', phase: 0, acc: -1, color };
+  const v = { root, model, legL, legR, gun, accGroup, gunColor: '', phase: 0, acc: -1, color, fit };
   setAccessory(v, acc, color);
   return v;
 }
@@ -184,17 +223,17 @@ export function setAccessory(v, acc, color) {
   for (const c of [...v.accGroup.children]) v.accGroup.remove(c);
   for (const part of accessoryParts(acc, color)) v.accGroup.add(part);
 }
-export function ensurePlayer(id, color, acc = 0) {
+export function ensurePlayer(id, color, acc = 0, fit = 0) {
   let v = players.get(id);
   if (v) return v;
-  v = buildPlayerModel(color, acc);
+  v = buildPlayerModel(color, acc, fit);
   entGroup.add(v.root);
   players.set(id, v);
   return v;
 }
 
 // A little turntable model for the menu / room lobby, drawn on its own small canvas.
-export function createPreview(canvas, color, acc) {
+export function createPreview(canvas, color, acc, fit = 0) {
   const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   r.setSize(canvas.width, canvas.height, false);
@@ -206,15 +245,15 @@ export function createPreview(canvas, color, acc) {
   const sun = new THREE.DirectionalLight(0xfff0d0, 1.1);
   sun.position.set(-3, 6, 5);
   sc.add(sun);
-  const v = buildPlayerModel(color, acc);
+  const v = buildPlayerModel(color, acc, fit);
   v.gun.material = mat('#ffd166');
   sc.add(v.root);
   let t = 0, tm = 0;
   return {
-    set(c, a) {
-      if (c !== v.color) { // new shirt colour: rebuild the model
+    set(c, a, f = 0) {
+      if (c !== v.color || f !== v.fit) { // new colour or outfit: rebuild the model
         sc.remove(v.root);
-        const nv = buildPlayerModel(c, a); nv.gun.material = mat('#ffd166');
+        const nv = buildPlayerModel(c, a, f); nv.gun.material = mat('#ffd166');
         Object.assign(v, nv); sc.add(v.root);
       } else setAccessory(v, a, c);
     },
@@ -227,7 +266,7 @@ export function createPreview(canvas, color, acc) {
   };
 }
 // turn > 0 eases the visible facing toward `a` (exponential, shortest way round); 0 = use `a` as is
-export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, protectedNow = false) {
+export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, protectedNow = false, melee = false) {
   v.root.position.set(x, 0, y);
   if (turn > 0 && v.ang !== undefined && !v.wasDead) v.ang = lerpAngle(v.ang, a, 1 - Math.exp(-dt * turn));
   else v.ang = a;
@@ -236,12 +275,35 @@ export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, p
   v.model.rotation.y = Math.PI / 2 - v.ang;
   v.model.visible = !dead && (!protectedNow || Math.floor(v.blink * 9) % 2 === 0); // spawn protection: blink
   if (gunColor !== v.gunColor) { v.gunColor = gunColor; v.gun.material = mat(gunColor); }
+  v.swing = Math.max(0, (v.swing || 0) - dt * 5.5);
+  if (melee !== v.melee) { // swap between a gun and a sword model
+    v.melee = melee;
+    if (melee) v.gun.scale.set(0.07, 0.1, 1.05); else { v.gun.scale.set(0.1, 0.14, 0.62); v.gun.position.set(0.3, 0.86, 0.66); v.gun.rotation.y = 0; }
+  }
+  if (melee) { // blade pivots around the hand; swings across when attacking
+    const th = v.swing > 0 ? (v.swing - 0.5) * 2.6 : 0.3;
+    v.gun.position.set(0.3 + 0.62 * Math.sin(th), 0.9, 0.3 + 0.62 * Math.cos(th));
+    v.gun.rotation.y = th;
+  }
   if (moving) v.phase += dt * 14;
   const s = moving ? Math.sin(v.phase) : 0;
   v.legL.rotation.x = s * 0.8; v.legR.rotation.x = -s * 0.8;
   v.model.position.y = moving ? Math.abs(s) * 0.07 : 0;
 }
 export function removePlayer(id) { removeView(players, id); }
+export function swingPlayer(id) { const v = players.get(id); if (v) v.swing = 1; }
+// sword slash effect: a flat arc on the ground that fades quickly
+export function slash(x, y, a, range, arc, color) {
+  const q = slashes.find((t) => t.life <= 0) || slashes[0];
+  q.mesh.geometry.dispose();
+  q.mesh.geometry = new THREE.RingGeometry(range * 0.3, range, 20, 1, -arc / 2, arc).rotateX(-Math.PI / 2);
+  q.mesh.position.set(x, 0.9, y);
+  q.mesh.rotation.y = -a;
+  q.mesh.material.color.set(color);
+  q.mesh.material.opacity = 0.7;
+  q.mesh.visible = true;
+  q.life = 0.16;
+}
 
 const ZCFG = [
   { sc: 1, head: '#9bd16a', shirts: ['#7b5ea7', '#c0392b', '#2c7da0', '#b08968'] },
@@ -313,6 +375,10 @@ function itemMesh(def) {
   if (def && def.type === 'ammo') {
     g.add(box(0.56, 0.3, 0.4, '#5a4a2a', 0, 0.4, 0), box(0.6, 0.06, 0.44, '#3d3220', 0, 0.58, 0));
     for (const x of [-0.17, 0, 0.17]) g.add(box(0.1, 0.24, 0.1, color, x, 0.74, 0), box(0.1, 0.07, 0.1, '#c98a2b', x, 0.89, 0));
+  } else if (def && def.type === 'armor') {
+    g.add(box(0.56, 0.5, 0.3, color, 0, 0.5, 0), box(0.14, 0.2, 0.3, darken(color, 0.7), -0.2, 0.82, 0), box(0.14, 0.2, 0.3, darken(color, 0.7), 0.2, 0.82, 0), box(0.3, 0.1, 0.32, '#ffffff', 0, 0.55, 0));
+  } else if (def && def.melee) {
+    g.add(box(0.95, 0.05, 0.13, color, 0.08, 0.5, 0), box(0.07, 0.07, 0.34, '#8d6e3f', -0.36, 0.5, 0), box(0.24, 0.09, 0.1, '#5a3d1f', -0.52, 0.5, 0));
   } else if (def && def.type === 'heal') {
     g.add(box(0.46, 0.34, 0.46, '#ffffff', 0, 0.45, 0), box(0.32, 0.06, 0.1, '#e63946', 0, 0.64, 0), box(0.1, 0.06, 0.32, '#e63946', 0, 0.64, 0));
   } else {
@@ -376,6 +442,7 @@ export function setGraves(list, reviveSeconds, graveR) {
 export function clearEntities() {
   for (const m of [players, zombies, groundViews, graveViews]) for (const id of [...m.keys()]) removeView(m, id);
   for (const t of tracers) { t.life = 0; t.mesh.visible = false; }
+  for (const t of slashes) { t.life = 0; t.mesh.visible = false; }
   for (let i = 0; i < P.n; i++) P.life[i] = 0;
 }
 export function clearAll() { clearEntities(); clearMap(); }
@@ -436,6 +503,11 @@ export function draw(dt, time) {
     if (t.life <= 0) continue;
     t.life -= dt;
     if (t.life <= 0) t.mesh.visible = false; else t.mesh.material.opacity = Math.min(1, t.life / 0.05);
+  }
+  for (const q of slashes) {
+    if (q.life <= 0) continue;
+    q.life -= dt;
+    if (q.life <= 0) q.mesh.visible = false; else q.mesh.material.opacity = Math.min(0.7, (q.life / 0.16) * 0.7);
   }
   for (let i = 0; i < P.n; i++) {
     if (P.life[i] <= 0) continue;

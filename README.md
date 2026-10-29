@@ -12,6 +12,8 @@ npm install
 npm start            # http://localhost:3000   (admin: http://localhost:3000/admin.html)
 ```
 
+**Room creation is in beta and hidden from the main page.** Players only see the room list and can join. To create a room open **/create** (http://localhost:3000/create). It's the same game page with the *Create a room* form unlocked. (This hides the form only; it is not a password. Anyone who knows the address can use it.)
+
 Open the page in two browser tabs to try multiplayer. `npm test` runs the server and client smoke tests.
 
 ## Controls
@@ -20,6 +22,7 @@ Open the page in two browser tabs to try multiplayer. `npm test` runs the server
 |---|---|
 | WASD / Arrow keys | Walk |
 | **Mouse** | Aim at the cursor - your character turns smoothly toward it |
+| **Shift** | Sprint: 1.4x speed for ~3 seconds of stamina (yellow bar under your health). When it runs out you're exhausted and must wait ~3s; you can't shoot or swing while sprinting |
 | Space / Left click | Shoot (hold) - uses 1 bullet per shot |
 
 Keyboard-only? Use the arrow keys (or just don't touch the mouse): you then aim in the direction you walk, with the same smooth turning. Moving the mouse switches back to mouse aim.
@@ -44,9 +47,21 @@ Keyboard-only? Use the arrow keys (or just don't touch the mouse): you then aim 
 
 Bullets are **limited and shared by every gun**: you start with 90 (max 240) and each shot costs one (a shotgun blast is one bullet too). Walk over an **Ammo Pack** to grab +40 (or press E). Packs lie around the map, drop from zombies (tanks almost always), drop from players you kill in PvP, and you get +25 bullets when a wave is cleared. Dying/respawning resets you to 90. The HUD shows your count; at 0 your gun just clicks. The admin page can edit the Ammo Pack (type "Ammo pack").
 
+## Weapons, swords and room options
+
+- When creating a room, tick which **weapons are allowed** and pick what everyone **starts with**. Only allowed weapons spawn on the map or drop.
+- **Swords** (Sword, Katana, Greatsword) are melee: one swing hits everything in a wide arc in front of you, uses no ammo and can't hit through walls. Admins can make more (Items > Type: weapon > Melee).
+- PvP rooms have a tickbox: **when a player dies, a random item falls** (their gun plus a random gun / heal item and some ammo). Untick it for a pure skill match where nothing drops.
+- **Spectating:** when you're dead you watch a player who is still alive. Press Tab (Shift+Tab for previous), the left/right arrows, or click to switch.
+
+## Armor and damage
+
+- **Armor** items (Light Vest +40, Heavy Armor +80, max 100) lie around the map and drop from kills. Press E to wear one. While you have armor it soaks 60% of every hit (the blue bar above your health) until it is used up. You lose it when you die. Admins can make more (Items > Type: Armor).
+- All weapon damage is scaled to 70% (`DMG_SCALE` at the top of `server/game.js`) so fights last longer.
+
 ## Your character
 
-The home screen and room lobby show your character on a turntable. Change the **head accessory** with the left/right buttons or the **left/right arrow keys** (cap, cowboy hat, top hat, crown, headband, bunny ears, devil horns, halo, army helmet, mohawk, antenna, pirate hat, wizard hat). It is remembered in your browser and other players see it in game. Bots get a random one.
+The home screen and room lobby show your character on a turntable. Change the **head accessory** (25 hats: cap, cowboy hat, crown, bunny ears, halo, viking helmet, chef hat, jester, unicorn, pumpkin...) with the left/right buttons or the **left/right arrow keys**, and the **outfit** (10 styles: hoodie, red jacket, camo, striped tee, punk, lab coat, knight, overalls, ninja, or your team colour) with the outfit buttons or the **up/down arrow keys**. **Randomize look** picks both at random. Your team colour shows as a ring under your feet. It is remembered in your browser and other players see it in game. Bots get a random one.
 
 ## PvP deathmatch (with bots)
 

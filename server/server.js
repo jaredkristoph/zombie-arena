@@ -18,17 +18,23 @@ const MAX_ROOMS = 30;
 const MAX_CONN_PER_IP = 10;
 
 // ---------- persistent content ----------
-const store = { maps: [], items: [] };
+const store = { maps: [], items: [], seeded: [] };
 function loadStore() {
   try {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     store.maps = (raw.maps || []).map((m) => { const c = sanitizeMap(m); if (m.builtin) c.builtin = true; return c; });
+    store.seeded = Array.isArray(raw.seeded) ? raw.seeded.slice(0, 50) : [];
     store.items = (raw.items || []).map((i) => { const c = sanitizeItem(i); if (i.builtin) c.builtin = true; return c; });
   } catch (e) { /* first run or corrupt: fall through to defaults */ }
   if (!store.maps.length) store.maps = buildDefaultMaps();
   if (!store.items.some((i) => i.id === 'pistol')) store.items.unshift(DEFAULT_ITEMS[0]);
-  if (!store.items.some((i) => i.type === 'ammo')) store.items.push({ ...DEFAULT_ITEMS.find((i) => i.type === 'ammo') });
   if (store.items.length < 2) store.items = DEFAULT_ITEMS.map((i) => ({ ...i }));
+  // items added in later versions are seeded once into existing data files (and can then be deleted by the admin)
+  for (const d of DEFAULT_ITEMS) {
+    if (!['ammo', 'sword', 'katana', 'greatsword'].includes(d.id) || store.seeded.includes(d.id)) continue;
+    if (!store.items.some((i) => i.id === d.id)) store.items.push({ ...d });
+    store.seeded.push(d.id);
+  }
 }
 function saveStore() {
   try {
@@ -123,6 +129,7 @@ function serveStatic(req, res, url) {
   let p = decodeURIComponent(url.pathname);
   if (p === '/') p = '/index.html';
   if (p === '/admin') p = '/admin.html';
+  if (p === '/create') p = '/index.html'; // beta: same page, room creation unlocked (see client/game.js)
   const file = path.normalize(path.join(CLIENT_DIR, p));
   if (!file.startsWith(CLIENT_DIR + path.sep)) { res.writeHead(403); return res.end('Forbidden'); }
   fs.readFile(file, (err, data) => {
@@ -209,7 +216,7 @@ function onMessage(c, m) {
       c.name = cleanName(m.name, 14) || 'Survivor' + (100 + (c.id % 900));
       c.named = true;
       c.acc = Math.max(0, Math.min(ACC_COUNT - 1, Math.round(Number(m.acc)) || 0));
-      c.send({ t: 'hello_ok', id: c.id, name: c.name, maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
+      c.send({ t: 'hello_ok', id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;
     }
@@ -224,6 +231,9 @@ function onMessage(c, m) {
         difficulty: DIFF[m.difficulty] ? m.difficulty : 'normal',
         maxPlayers: Math.min(8, Math.max(1, Math.round(Number(m.max)) || 4)),
         mode: m.mode === 'pvp' ? 'pvp' : 'coop',
+        allowed: Array.isArray(m.weapons) ? m.weapons.filter((x) => typeof x === 'string').slice(0, 60) : undefined,
+        start: typeof m.start === 'string' ? m.start : '',
+        deathDrop: m.drops !== false,
         killLimit: Math.min(200, Math.max(0, Math.round(Number(m.kills)))) || 0,
       });
       rooms.set(room.id, room);

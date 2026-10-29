@@ -280,6 +280,116 @@ function testAccessories() {
   ok('accessories: stored per player and broadcast with the room');
 }
 
+function testSwordsAndLoadout() {
+  // loadout: only the ticked weapons exist, everyone starts with the chosen one
+  const r = mkRoom({ allowed: ['sword', 'pistol'], start: 'sword', waves: 3 });
+  const a = fakeConn(1, 'Ann');
+  const p = r.join(a);
+  assert.strictEqual(p.weapon, 'sword');
+  const loot = r.lootIds();
+  assert.ok(loot.includes('pistol') && !loot.includes('sword') && !loot.includes('shotgun') && !loot.includes('rifle'), 'only allowed weapons can appear: ' + loot);
+  r.startGame(); r.timer = 99999;
+  for (const g of r.ground) { const d = items[g.item]; assert.ok(d.type !== 'weapon' || ['sword', 'pistol'].includes(g.item), 'disallowed gun on map: ' + g.item); }
+  // sword: arc in front, no ammo, not through walls, not behind
+  p.x = 19.5; p.y = 19.5; p.a = 0; p.ammo = 0; r.ground = [];
+  const mk = (id, x, y) => { const z = { id, type: 0, x, y, hp: 100, maxHp: 100, spd: 0, dmg: 0, r: 0.38, cd: 0, side: 1, dead: false }; r.zombies.push(z); return z; };
+  const front = mk(900, 21.0, 19.5), side = mk(901, 19.5, 21.0), far = mk(902, 24.5, 19.5), back = mk(903, 18.0, 19.5);
+  r.fire(p);
+  assert.ok(front.hp < 100, 'target in front is hit');
+  assert.ok(side.hp === 100 && far.hp === 100 && back.hp === 100, 'outside the arc / range is safe');
+  assert.strictEqual(p.ammo, 0, 'melee uses no ammo');
+  assert.ok(r.ev.some((e) => e[0] === 'w'), 'swing event');
+  // pvp loadout + death drops option
+  for (const drop of [true, false]) {
+    const q = mkRoom({ mode: 'pvp', killLimit: 0, deathDrop: drop, allowed: ['sword', 'pistol', 'rifle'], start: 'pistol' });
+    const x = fakeConn(1, 'X'), y = fakeConn(2, 'Y');
+    const px = q.join(x), py = q.join(y);
+    q.startGame(); q.ground = [];
+    px.x = 19.5; px.y = 19.5; px.a = 0; px.weapon = 'sword'; px.cd = 0; px.inv = 0;
+    py.x = 20.5; py.y = 19.5; py.inv = 0; py.hp = 10; py.weapon = 'rifle'; py.ammo = 50;
+    q.fire(px);
+    assert.ok(py.dead && px.kills === 1, 'sword kills a player');
+    if (drop) {
+      assert.ok(q.ground.length >= 3, 'death drops weapon + random item + ammo: ' + q.ground.map((g) => g.item));
+      assert.ok(q.ground.some((g) => g.item === 'rifle'), 'carried gun dropped');
+    } else assert.strictEqual(q.ground.length, 0, 'nothing drops when the option is off');
+    assert.strictEqual(py.weapon, 'pistol', 'respawn weapon is the starting weapon');
+  }
+  ok('swords (arc, no ammo), weapon loadout per room, pvp death-drop option');
+}
+
+function testSprint() {
+  const { SPRINT_MULT, STAM_MAX } = require('../server/game');
+  const r = mkRoom({ waves: 3 });
+  const a = fakeConn(1, 'Ann');
+  const p = r.join(a);
+  r.startGame(); r.timer = 99999; r.zombies = [];
+  const run = (sp, ms, seq) => { p.x = 12.5; p.y = 19.5; const x0 = p.x; p.budget = 1; r.onInput(p, { seq, dx: 1, dy: 0, dt: ms, sh: 0, sp }); return p.x - x0; };
+  const walk = run(0, 100, 1);
+  const sprint = run(1, 100, 2);
+  assert.ok(Math.abs(sprint / walk - SPRINT_MULT) < 0.05, 'sprint is ' + SPRINT_MULT + 'x faster (' + (sprint / walk).toFixed(2) + ')');
+  // drain until exhausted, then lockout until it recovers past the threshold
+  p.stam = STAM_MAX; p.exh = false;
+  let t = 0;
+  while (!p.exh && t < 200) { p.x = 12.5; p.budget = 1; r.onInput(p, { seq: 3 + t, dx: 1, dy: 0, dt: 100, sh: 0, sp: 1 }); t++; }
+  assert.ok(p.exh && p.stam === 0, 'runs out of stamina');
+  assert.ok(t * 0.1 > 3 && t * 0.1 < 4, 'about 3.3s of sprint from full: ' + t * 0.1);
+  const locked = run(1, 100, 900);
+  assert.ok(Math.abs(locked / walk - 1) < 0.05, 'cannot sprint while exhausted');
+  // cannot shoot while sprinting
+  p.stam = STAM_MAX; p.exh = false; p.x = 12.5; p.budget = 1; p.cd = 0; p.ammo = 50;
+  r.onInput(p, { seq: 901, dx: 1, dy: 0, dt: 100, sh: 1, sp: 1 });
+  r.tick();
+  assert.strictEqual(p.ammo, 50, 'no shooting while sprinting');
+  // recovery: delay, then slow regen; exhaustion clears at 30
+  p.stam = 0; p.exh = true; p.sprinting = false; p.sDelay = 1;
+  let secs = 0;
+  while (p.exh && secs < 20) { r.tick(); secs += DT; }
+  assert.ok(secs > 2.5 && secs < 4, 'cooldown before sprinting again ~3s: ' + secs.toFixed(2));
+  ok('sprint: 1.4x speed, ~3.3s of stamina, exhaustion cooldown, no shooting while sprinting');
+}
+
+function testArmorAndDamage() {
+  const { DMG_SCALE } = require('../server/game');
+  assert.strictEqual(DMG_SCALE, 0.7);
+  const r = mkRoom({ mode: 'pvp', killLimit: 0 });
+  const a = fakeConn(1, 'A'), b = fakeConn(2, 'B');
+  const pa = r.join(a), pb = r.join(b);
+  r.startGame(); r.ground = [];
+  pa.x = 17.5; pa.y = 19.5; pa.a = 0; pa.inv = 0; pa.weapon = 'rifle'; pa.cd = 0;
+  pb.x = 21.5; pb.y = 19.5; pb.inv = 0;
+  r.fire(pa);
+  assert.ok(Math.abs(pb.hp - (100 - 34 * 0.7)) < 0.01, 'weapon damage is 30% weaker: ' + pb.hp);
+  // armor soaks 60% of each hit until used up
+  pb.hp = 100; pb.armor = 0; r.addGround(pb.x, pb.y, 'vest', 0); r.act(pb, 'equip');
+  assert.strictEqual(pb.armor, 40, 'light vest = +40');
+  r.addGround(pb.x, pb.y, 'plate', 0); r.act(pb, 'equip');
+  assert.strictEqual(pb.armor, 100, 'armor capped at 100');
+  r.addGround(pb.x, pb.y, 'vest', 0); r.act(pb, 'equip');
+  assert.ok(r.ground.some((g) => g.item === 'vest'), 'full armor: item stays');
+  pa.cd = 0; r.fire(pa);
+  const dmg = 34 * 0.7;
+  assert.ok(Math.abs(pb.hp - (100 - dmg * 0.4)) < 0.01 && Math.abs(pb.armor - (100 - dmg * 0.6)) < 0.01, 'armor soaked 60%: hp ' + pb.hp + ' armor ' + pb.armor);
+  pb.armor = 5; pb.hp = 100; pa.cd = 0; r.fire(pa);
+  assert.ok(pb.armor === 0 && Math.abs(pb.hp - (100 - (dmg - 5))) < 0.01, 'leftover armor is used up first');
+  pb.hp = 1; pb.armor = 0; pa.cd = 0; r.fire(pa);
+  assert.ok(pb.dead && pb.armor === 0, 'death clears armor'); r.respawn(pb); assert.strictEqual(pb.armor, 0);
+  assert.ok(r.lootIds().includes('vest') && r.lootIds().includes('plate'), 'armor spawns as loot');
+  ok('armor: pickup, cap, absorbs 60% of damage; weapon damage scaled by 0.7');
+}
+function testLook() {
+  const { FIT_COUNT, ACC_COUNT } = require('../server/game');
+  assert.strictEqual(FIT_COUNT, 10); assert.strictEqual(ACC_COUNT, 25);
+  const r = mkRoom({ mode: 'pvp' });
+  const c = fakeConn(1, 'A'); c.acc = 20; c.fit = 7;
+  const p = r.join(c);
+  assert.ok(p.acc === 20 && p.fit === 7);
+  r.sendRoom();
+  const rm = c.msgs.slice().reverse().find((m) => m.t === 'room');
+  assert.ok(rm.players[0].acc === 20 && rm.players[0].fit === 7, 'room carries hat + outfit');
+  ok('look: 25 hats, 10 outfits stored and broadcast');
+}
+
 function api(port, method, path, body, key) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
@@ -391,7 +501,7 @@ async function testNetwork() {
 }
 
 (async () => {
-  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testPvp(); testBotsFight(); testAmmo(); testAccessories();
+  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testArmorAndDamage(); testLook();
   await testNetwork();
   console.log('\nAll ' + passed + ' checks passed');
   process.exit(0);

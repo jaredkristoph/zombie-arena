@@ -1,16 +1,21 @@
 // Zombie Arena client: lobby UI, networking, input + prediction, HUD, chat.
-import { $, clamp, lerp, lerpAngle, makeGrid, moveCircle, PLAYER_R, PLAYER_SPEED, sfx, unlockAudio, toggleMute } from './util.js';
+import { $, clamp, lerp, lerpAngle, makeGrid, moveCircle, PLAYER_R, PLAYER_SPEED, STAM_MAX, SPRINT_MULT, SPRINT_DRAIN, STAM_REGEN, SPRINT_DELAY, STAM_RESUME, sfx, unlockAudio, toggleMute } from './util.js';
 import * as W3 from './world.js';
 
 const INTERP_MS = 110;
+// Room creation is in beta: the form only appears on the /create address (or ?create)
+const LOC = window.location || {};
+const CREATE_MODE = /create/i.test(LOC.pathname || '') || /(^|[?&])create(=|&|$)/.test(LOC.search || '');
+document.body.classList.toggle('can-create', CREATE_MODE);
 const S = {
   ws: null, id: 0, name: '', maps: [], rooms: [], room: null, roster: [],
   inGame: false, map: null, grid: null, items: {}, revive: 30, pickR: 1.6, graveR: 1.5,
-  me: { x: 0, y: 0, vx: 0, vy: 0, a: 0, hp: 100, dead: false, weapon: 'pistol', bag: 0, kills: 0, init: false },
+  me: { x: 0, y: 0, vx: 0, vy: 0, a: 0, hp: 100, dead: false, weapon: 'pistol', bag: 0, kills: 0, armor: 0, init: false },
   pending: [], acc: { dx: 0, dy: 0, dt: 0, sh: 0 }, seq: 0, lastKey: '0,0,0', lastIdle: true,
   snaps: [], latest: null, groundList: [], graves: [], wave: { n: 0, of: 0, ph: 0, tm: 0, left: 0 },
   mode: 'coop', killLimit: 0, respawn: 10, mouse: { x: 0, y: 0, down: false, has: false }, aimMode: 'keys', sentAim: 0,
-  acc: 0, myColor: '#1982c4', preview: null, previewOn: false,
+  stam: STAM_MAX, exh: false, stDelay: 0, sprinting: false,
+  acc: 0, fit: 0, myColor: '#1982c4', preview: null, previewOn: false,
   spec: 0, lastHp: 100, ping: 0, loop: false, three: false, shootSfxT: 0, connected: false, retry: 0,
 };
 const keys = {};
@@ -28,7 +33,7 @@ function wsUrl() {
 }
 function send(o) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(o)); }
 function myName() { return ($('name').value || '').trim(); }
-function ensureName() { send({ t: 'hello', name: myName(), acc: S.acc }); }
+function ensureName() { send({ t: 'hello', name: myName(), acc: S.acc, fit: S.fit }); }
 
 function connect() {
   clearTimeout(S.retry);
@@ -51,7 +56,7 @@ setInterval(() => { if (S.connected) send({ t: 'ping', ts: performance.now() });
 
 function handle(m) {
   switch (m.t) {
-    case 'hello_ok': S.id = m.id; S.name = m.name; fillMaps(m.maps); S.rooms = m.rooms; renderRooms(); localStorage.setItem('za-name', m.name); break;
+    case 'hello_ok': S.id = m.id; S.name = m.name; fillMaps(m.maps); fillWeapons(m.weapons || []); S.rooms = m.rooms; renderRooms(); localStorage.setItem('za-name', m.name); break;
     case 'rooms': S.rooms = m.rooms; renderRooms(); break;
     case 'left': S.rooms = m.rooms; S.room = null; renderRooms(); setScreen('menu'); clearChat(); break;
     case 'room': onRoom(m); break;
@@ -83,20 +88,27 @@ function setScreen(name) {
 }
 // ---- your character (shown on the home screen and in the room lobby) ----
 const ACC_N = W3.ACC_NAMES.length;
-try { S.acc = Math.max(0, Math.min(ACC_N - 1, parseInt(localStorage.getItem('za-acc'), 10) || 0)); } catch (e) { S.acc = 0; }
+const FIT_N = W3.FIT_NAMES.length;
+try {
+  S.acc = Math.max(0, Math.min(ACC_N - 1, parseInt(localStorage.getItem('za-acc'), 10) || 0));
+  S.fit = Math.max(0, Math.min(FIT_N - 1, parseInt(localStorage.getItem('za-fit'), 10) || 0));
+} catch (e) { S.acc = 0; S.fit = 0; }
 function refreshPreview() {
   $('acc-name').textContent = W3.ACC_NAMES[S.acc];
+  $('fit-name').textContent = W3.FIT_NAMES[S.fit];
   if (!S.preview) {
-    try { S.preview = W3.createPreview($('preview'), S.myColor, S.acc); } catch (e) { S.preview = null; }
+    try { S.preview = W3.createPreview($('preview'), S.myColor, S.acc, S.fit); } catch (e) { S.preview = null; }
   }
-  if (S.preview) S.preview.set(S.myColor, S.acc);
+  if (S.preview) S.preview.set(S.myColor, S.acc, S.fit);
 }
-function changeAcc(d) {
-  S.acc = (S.acc + d + ACC_N) % ACC_N;
-  try { localStorage.setItem('za-acc', String(S.acc)); } catch (e) { /* ignore */ }
+function saveLook() {
+  try { localStorage.setItem('za-acc', String(S.acc)); localStorage.setItem('za-fit', String(S.fit)); } catch (e) { /* ignore */ }
   refreshPreview();
-  send({ t: 'acc', v: S.acc });
+  send({ t: 'acc', v: S.acc, f: S.fit });
 }
+function changeAcc(d) { S.acc = (S.acc + d + ACC_N) % ACC_N; saveLook(); }
+function changeFit(d) { S.fit = (S.fit + d + FIT_N) % FIT_N; saveLook(); }
+function randomizeLook() { S.acc = Math.floor(Math.random() * ACC_N); S.fit = Math.floor(Math.random() * FIT_N); saveLook(); }
 function startPreview() {
   if (S.previewOn || !S.preview) return;
   S.previewOn = true;
@@ -111,6 +123,9 @@ function startPreview() {
 }
 $('acc-prev').onclick = () => changeAcc(-1);
 $('acc-next').onclick = () => changeAcc(1);
+$('fit-prev').onclick = () => changeFit(-1);
+$('fit-next').onclick = () => changeFit(1);
+$('rand-look').onclick = randomizeLook;
 function fillMaps(maps) {
   const sel = $('c-map'), prev = sel.value;
   sel.innerHTML = '';
@@ -118,10 +133,35 @@ function fillMaps(maps) {
   if (prev) sel.value = prev;
   S.maps = maps;
 }
+function fillWeapons(list) {
+  const box = $('c-weapons');
+  const key = list.map((w) => w.id).join(',');
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  const prevOn = new Set([...box.children].filter((l) => l.firstChild && l.firstChild.checked).map((l) => l.firstChild.value));
+  const first = !box.children.length;
+  box.innerHTML = '';
+  for (const w of list) {
+    const l = document.createElement('label');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = w.id; cb.checked = first || prevOn.has(w.id);
+    cb.onchange = syncStartSelect;
+    l.append(cb, document.createTextNode((w.melee ? '\u2694 ' : '') + w.name));
+    box.appendChild(l);
+  }
+  syncStartSelect();
+}
+function selectedWeapons() { return [...$('c-weapons').children].filter((l) => l.firstChild && l.firstChild.checked).map((l) => l.firstChild.value); }
+function syncStartSelect() {
+  const sel = $('c-start'), prev = sel.value, ids = selectedWeapons();
+  sel.innerHTML = '';
+  const names = new Map([...$('c-weapons').children].map((l) => [l.firstChild.value, l.textContent.replace('\u2694 ', '')]));
+  for (const id of ids) { const o = document.createElement('option'); o.value = id; o.textContent = names.get(id) || id; sel.appendChild(o); }
+  sel.value = ids.includes(prev) ? prev : (ids.includes('pistol') ? 'pistol' : ids[0] || '');
+}
 function renderRooms() {
   const box = $('rooms');
   box.innerHTML = '';
-  if (!S.rooms.length) { box.innerHTML = '<div class="empty">No rooms yet. Create one!</div>'; return; }
+  if (!S.rooms.length) { box.innerHTML = '<div class="empty">' + (CREATE_MODE ? 'No rooms yet. Create one!' : 'No rooms are open right now - check back soon!') + '</div>'; return; }
   for (const r of S.rooms) {
     const row = document.createElement('div'); row.className = 'rm';
     const meta = document.createElement('div'); meta.className = 'meta';
@@ -147,7 +187,7 @@ function onRoom(m) {
     const pvp = m.room.mode === 'pvp';
     const host = m.room.host === S.id;
     const goal = pvp ? (m.room.killLimit ? 'first to ' + m.room.killLimit + ' kills' : 'endless') : (m.room.waves ? m.room.waves + ' waves' : 'endless');
-    $('r-info').textContent = `${pvp ? 'PvP deathmatch' : 'Co-op survival'} · ${m.room.map} · ${goal} · ${pvp ? 'bot skill: ' : ''}${m.room.difficulty} · ${m.players.length}/${m.room.max} players`;
+    $('r-info').textContent = `${pvp ? 'PvP deathmatch' : 'Co-op survival'} · ${m.room.map} · ${goal} · ${pvp ? 'bot skill: ' : ''}${m.room.difficulty} · ${m.players.length}/${m.room.max} players${pvp && m.room.drops ? ' · item drops on death' : ''}`;
     const pl = $('r-players'); pl.innerHTML = '';
     for (const p of m.players) {
       const c = document.createElement('div'); c.className = 'chip' + (p.bot ? ' bot' : '');
@@ -173,7 +213,7 @@ $('btn-create').onclick = () => {
   unlockAudio(); ensureName();
   send({
     t: 'create', name: $('c-name').value, map: $('c-map').value, mode: $('c-mode').value, waves: Number($('c-waves').value),
-    kills: Number($('c-kills').value), difficulty: $('c-diff').value, max: Number($('c-max').value),
+    kills: Number($('c-kills').value), weapons: selectedWeapons(), start: $('c-start').value, drops: $('c-drop').checked, difficulty: $('c-diff').value, max: Number($('c-max').value),
   });
 };
 function syncModeUi() {
@@ -182,6 +222,7 @@ function syncModeUi() {
   $('c-kills-l').style.display = pvp ? '' : 'none';
   $('c-hint').textContent = pvp ? '0 kills = endless deathmatch. You respawn 10s after dying. Add bots in the room lobby.' : '0 waves = endless survival';
   $('c-diff-l').textContent = pvp ? 'Bot skill' : 'Difficulty';
+  $('c-drop-l').style.display = pvp ? '' : 'none';
 }
 $('c-mode').onchange = syncModeUi;
 syncModeUi();
@@ -243,7 +284,7 @@ function startGame(m) {
   document.body.classList.toggle('mode-pvp', S.mode === 'pvp');
   S.grid = makeGrid(m.map);
   S.snaps = []; S.latest = null; S.pending = []; S.groundList = []; S.graves = []; S.me.init = false; S.me.dead = false; S.seq = 0; S.spec = 0;
-  S.acc = { dx: 0, dy: 0, dt: 0, sh: 0 }; S.lastKey = '0,0,0'; S.lastIdle = true; S.lastHp = 100;
+  S.acc = { dx: 0, dy: 0, dt: 0, sh: 0, sp: 0 }; S.lastKey = '0,0,0,0'; S.stam = STAM_MAX; S.exh = false; S.stDelay = 0; S.lastIdle = true; S.lastHp = 100;
   if (!S.three) { W3.init($('c')); S.three = true; }
   W3.clearAll();
   W3.buildMap(m.map);
@@ -297,16 +338,18 @@ function onSnapshot(m) {
   if (sp) {
     if (sp[4] < S.lastHp && !me.dead) { $('hurt').style.opacity = 1; setTimeout(() => { $('hurt').style.opacity = 0; }, 120); W3.shake(0.35); }
     S.lastHp = sp[4];
-    me.hp = sp[4]; me.weapon = sp[5]; me.dead = !!sp[6]; me.bag = sp[7]; me.kills = sp[8]; me.rs = sp[9] || 0; me.ammo = sp[12] === undefined ? 0 : sp[12];
+    me.hp = sp[4]; me.weapon = sp[5]; me.dead = !!sp[6]; me.bag = sp[7]; me.kills = sp[8]; me.rs = sp[9] || 0;
+    me.armor = sp[15] || 0;
+    if (sp[13] !== undefined) { if (sp[13] < S.stam - 12 || me.dead) S.stam = sp[13]; if (sp[14]) S.exh = true; if (me.dead) { S.stam = STAM_MAX; S.exh = false; } } me.ammo = sp[12] === undefined ? 0 : sp[12];
     if (!me.init) { me.init = true; me.x = me.vx = sp[1]; me.y = me.vy = sp[2]; me.a = sp[3]; W3.snapCamera(sp[1], sp[2]); }
     // reconcile: server state + replay of inputs the server has not processed yet
     const sx = sp[1], sy = sp[2];
     S.pending = S.pending.filter((q) => q.seq > m.a);
     const e = { x: sx, y: sy };
     if (!me.dead) {
-      for (const q of S.pending) moveCircle(S.grid, e, q.dx * PLAYER_SPEED * q.dt, q.dy * PLAYER_SPEED * q.dt, PLAYER_R);
+      for (const q of S.pending) moveCircle(S.grid, e, q.dx * PLAYER_SPEED * q.m * q.dt, q.dy * PLAYER_SPEED * q.m * q.dt, PLAYER_R);
       const a = S.acc;
-      if (a.dt > 0 && (a.dx || a.dy)) moveCircle(S.grid, e, a.dx * PLAYER_SPEED * a.dt, a.dy * PLAYER_SPEED * a.dt, PLAYER_R);
+      if (a.dt > 0 && (a.dx || a.dy)) { const am = a.sp ? SPRINT_MULT : 1; moveCircle(S.grid, e, a.dx * PLAYER_SPEED * am * a.dt, a.dy * PLAYER_SPEED * am * a.dt, PLAYER_R); }
       if (Math.hypot(e.x - me.x, e.y - me.y) > 2.5) { me.x = e.x; me.y = e.y; }
       else { me.x += (e.x - me.x) * 0.35; me.y += (e.y - me.y) * 0.35; }
     } else { me.x = sx; me.y = sy; }
@@ -336,6 +379,15 @@ function fx(ev) {
     case 'h': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.9, '#ff3b5c', 8, 3.5, 0.15, 0.45); sfx('hurt', ev[1] === S.id ? 1 : distVol(v ? v[1] : 99, v ? v[2] : 99) * 0.6); break; }
     case 'd': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.8, '#ff3b5c', 22, 5, 0.2, 0.8); sfx('death', ev[1] === S.id ? 1 : 0.5); if (ev[1] === S.id) W3.shake(0.8); break; }
     case 'r': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.3, '#9be564', 30, 4, 0.18, 1.0); sfx('revive', ev[1] === S.id ? 1 : 0.6); break; }
+    case 'w': {
+      const [, pid, x, y, a, range, arc, hit, wid] = ev;
+      const def = S.items[wid];
+      W3.slash(x, y, a, range, arc, def ? def.color : '#ffffff');
+      W3.swingPlayer(pid);
+      if (hit) { W3.burst(x + Math.cos(a) * range * 0.7, y + Math.sin(a) * range * 0.7, 0.85, '#7bd24a', 5, 3.2, 0.14, 0.4); sfx('hit', distVol(x, y) * 0.9); }
+      else sfx('shoot', distVol(x, y) * 0.25);
+      break;
+    }
     case 'e': if (ev[1] === S.id) { sfx('empty'); if (performance.now() - (S.emptyT || 0) > 1500) { S.emptyT = performance.now(); toast('Out of ammo! Find an ammo pack'); } } break;
     case 'u': { const v = S.latest && S.latest.p.get(ev[1]); sfx('pick', ev[1] === S.id ? 1 : distVol(v ? v[1] : 99, v ? v[2] : 99) * 0.5); break; }
     case 'm': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.9, '#ff7a9c', 10, 2.5, 0.16, 0.8); sfx('heal', ev[1] === S.id ? 1 : 0.4); break; }
@@ -344,7 +396,7 @@ function fx(ev) {
 }
 
 // ---------- input ----------
-const GAME_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
+const GAME_KEYS = new Set(['ShiftLeft', 'ShiftRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
 window.addEventListener('keydown', (e) => {
   unlockAudio();
   const typing = document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT');
@@ -352,10 +404,12 @@ window.addEventListener('keydown', (e) => {
     if (!typing) { if (S.inGame) openChat(); else dom.chat.focus(); e.preventDefault(); }
     return;
   }
-  if (!S.inGame && !typing && (e.code === 'ArrowLeft' || e.code === 'ArrowRight') && (document.body.classList.contains('screen-menu') || document.body.classList.contains('screen-room'))) {
-    changeAcc(e.code === 'ArrowLeft' ? -1 : 1); e.preventDefault(); return;
+  if (!S.inGame && !typing && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code) && (document.body.classList.contains('screen-menu') || document.body.classList.contains('screen-room'))) {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') changeAcc(e.code === 'ArrowLeft' ? -1 : 1); else changeFit(e.code === 'ArrowUp' ? -1 : 1);
+    e.preventDefault(); return;
   }
   if (!S.inGame || typing) return;
+  if (S.me.dead && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) { if (!e.repeat) cycleSpectate(e.code === 'ArrowLeft' ? -1 : 1); e.preventDefault(); return; }
   if (GAME_KEYS.has(e.code)) {
     keys[e.code] = true; e.preventDefault();
     if (e.code.startsWith('Arrow')) setAimMode('keys'); // arrows = keyboard-only play; moving the mouse switches back
@@ -368,7 +422,7 @@ window.addEventListener('keydown', (e) => {
     case 'KeyG': send({ t: 'act', k: 'dropheal' }); break;
     case 'KeyH': send({ t: 'act', k: 'heal' }); break;
     case 'KeyM': toast(toggleMute() ? 'Sound off' : 'Sound on'); break;
-    case 'Tab': cycleSpectate(); e.preventDefault(); break;
+    case 'Tab': cycleSpectate(e.shiftKey ? -1 : 1); e.preventDefault(); break;
     case 'Escape': closeChat(); break;
     default:
   }
@@ -391,6 +445,7 @@ window.addEventListener('mousemove', (e) => {
 window.addEventListener('mousedown', (e) => {
   unlockAudio();
   if (e.button !== 0 || !S.inGame || e.target !== $('c')) return;
+  if (S.me.dead) { cycleSpectate(1); e.preventDefault(); return; }
   S.mouse.x = e.clientX; S.mouse.y = e.clientY; S.mouse.has = true; S.mouse.down = true;
   setAimMode('mouse');
   e.preventDefault();
@@ -398,12 +453,13 @@ window.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => { if (e.button === 0) S.mouse.down = false; });
 window.addEventListener('contextmenu', (e) => { if (S.inGame && e.target === $('c')) e.preventDefault(); });
 
-function cycleSpectate() {
+// while dead you watch a player who is still alive; Tab / arrow keys / mouse click switch to the next or previous one
+function cycleSpectate(dir = 1) {
   if (!S.latest) return;
   const alive = [...S.latest.p.values()].filter((p) => !p[6] && p[0] !== S.id).map((p) => p[0]);
   if (!alive.length) return;
   const i = alive.indexOf(S.spec);
-  S.spec = alive[(i + 1) % alive.length];
+  S.spec = alive[(i + (i < 0 ? (dir > 0 ? 0 : alive.length - 1) : dir) + alive.length) % alive.length];
 }
 
 function flushInput() {
@@ -418,8 +474,8 @@ function flushInput() {
   S.sentAim = aim;
   const dt = Math.min(a.dt, 0.1);
   S.seq++;
-  send({ t: 'in', seq: S.seq, dx: a.dx, dy: a.dy, dt: Math.round(dt * 1000), sh: a.sh, aa: Math.round(aim * 1000) / 1000 });
-  if (moving && dt > 0) S.pending.push({ seq: S.seq, dx: a.dx, dy: a.dy, dt });
+  send({ t: 'in', seq: S.seq, dx: a.dx, dy: a.dy, dt: Math.round(dt * 1000), sh: a.sh, sp: a.sp ? 1 : 0, aa: Math.round(aim * 1000) / 1000 });
+  if (moving && dt > 0) S.pending.push({ seq: S.seq, dx: a.dx, dy: a.dy, dt, m: a.sp ? SPRINT_MULT : 1 });
   if (S.pending.length > 40) S.pending.shift();
   a.dt = 0;
 }
@@ -435,7 +491,18 @@ function inputStep(dt) {
   }
   const len = Math.hypot(dx, dy);
   if (len > 0) { dx /= len; dy /= len; }
-  const sh = !typing && !me.dead && (keys.Space || S.mouse.down) ? 1 : 0;
+  // sprint (Shift): needs stamina, drains it, then a cooldown before it can be used again
+  const wantSprint = !typing && !me.dead && len > 0 && (keys.ShiftLeft || keys.ShiftRight);
+  const sprint = wantSprint && !S.exh && S.stam > 0 ? 1 : 0;
+  S.sprinting = !!sprint;
+  if (sprint) {
+    S.stam -= SPRINT_DRAIN * dt; S.stDelay = SPRINT_DELAY;
+    if (S.stam <= 0) { S.stam = 0; S.exh = true; }
+  } else if ((S.stDelay -= dt) <= 0) {
+    S.stDelay = 0; S.stam = Math.min(STAM_MAX, S.stam + STAM_REGEN * dt);
+    if (S.exh && S.stam >= STAM_RESUME) S.exh = false;
+  }
+  const sh = !typing && !me.dead && !sprint && (keys.Space || S.mouse.down) ? 1 : 0;
   // ---- aiming: pick a target angle, then turn toward it smoothly (never snap) ----
   if (!me.dead) {
     let target = null, rate = 14;
@@ -445,10 +512,10 @@ function inputStep(dt) {
     } else if (len > 0) target = Math.atan2(dy, dx);
     if (target !== null) me.a = lerpAngle(me.a, target, 1 - Math.exp(-dt * rate));
   }
-  const key = dx.toFixed(2) + ',' + dy.toFixed(2) + ',' + sh;
-  if (key !== S.lastKey) { flushInput(); S.lastKey = key; S.acc.dx = dx; S.acc.dy = dy; S.acc.sh = sh; }
+  const key = dx.toFixed(2) + ',' + dy.toFixed(2) + ',' + sh + ',' + sprint;
+  if (key !== S.lastKey) { flushInput(); S.lastKey = key; S.acc.dx = dx; S.acc.dy = dy; S.acc.sh = sh; S.acc.sp = sprint; }
   S.acc.dt += dt;
-  if (len > 0 && !me.dead) moveCircle(S.grid, me, dx * PLAYER_SPEED * dt, dy * PLAYER_SPEED * dt, PLAYER_R);
+  if (len > 0 && !me.dead) { const mu = sprint ? SPRINT_MULT : 1; moveCircle(S.grid, me, dx * PLAYER_SPEED * mu * dt, dy * PLAYER_SPEED * mu * dt, PLAYER_R); }
   if (S.acc.dt >= 0.05) flushInput();
   return len > 0;
 }
@@ -511,7 +578,7 @@ function frame(now) {
     livePlayers.add(id);
     const info = S.roster.find((r) => r.id === id);
     const color = info ? info.color : '#ffffff';
-    const v = W3.ensurePlayer(id, color, info ? info.acc : 0);
+    const v = W3.ensurePlayer(id, color, info ? info.acc : 0, info ? info.fit : 0);
     const def = S.items[p[5]] || S.items.pistol;
     const gunCol = def ? def.color : '#ffffff';
     let x, y, a, mv;
@@ -522,7 +589,7 @@ function frame(now) {
       v.lx = q[0]; v.ly = q[1]; x = q[0]; y = q[1]; a = q[2];
     }
     // our own aim is already smoothed in inputStep; other players are eased here so 20Hz snapshots never look steppy
-    W3.updatePlayer(v, x, y, a, !!p[6], gunCol, dt, mv, id === S.id ? 0 : 16, !!p[10]);
+    W3.updatePlayer(v, x, y, a, !!p[6], gunCol, dt, mv, id === S.id ? 0 : 16, !!p[10], !!(def && def.melee));
     const l = label('p' + id, color);
     l.nm.textContent = info ? info.name + (p[6] ? ' (dead)' : '') : '...';
     if (l.talkUntil && now > l.talkUntil) { l.talkUntil = 0; l.el.classList.remove('talking'); }
@@ -561,7 +628,7 @@ function frame(now) {
   if (!me.dead && !prompt) {
     let best = null, bd = S.pickR * S.pickR;
     for (const g of S.groundList) { if (S.items[g[3]] && S.items[g[3]].type === 'ammo') continue; const d = (g[1] - me.vx) ** 2 + (g[2] - me.vy) ** 2; if (d < bd) { bd = d; best = g; } }
-    if (best) { const def = S.items[best[3]]; if (def && def.type !== 'ammo') prompt = `[E] ${def.type === 'heal' ? 'Pick up' : 'Equip'} ${def.name}`; }
+    if (best) { const def = S.items[best[3]]; if (def && def.type !== 'ammo') prompt = `[E] ${def.type === 'heal' ? 'Pick up' : def.type === 'armor' ? 'Wear' : 'Equip'} ${def.name}`; }
   }
   const pr = $('prompt');
   if (prompt) { pr.style.display = 'block'; setText('prompt', prompt); } else pr.style.display = 'none';
@@ -573,6 +640,8 @@ function frame(now) {
     if (alive.length && !alive.some((p) => p[0] === S.spec)) S.spec = alive[0][0];
     const q = alive.length ? interp('p', S.spec) : null;
     if (q) { cx = q[0]; cy = q[1]; }
+    const si = S.roster.find((r) => r.id === S.spec);
+    S.specName = q && si ? si.name : '';
   }
   W3.followCamera(cx, cy, dt);
   W3.draw(dt, now / 1000);
@@ -588,11 +657,16 @@ function updateHud(me, myGrave) {
   else if (w.n === 0) { setText('wave-title', 'GET READY'); setText('wave-sub', `Wave 1 starts in ${w.tm}s`); }
   else { setText('wave-title', `WAVE ${w.n} CLEARED`); setText('wave-sub', `Next wave in ${w.tm}s - revive friends & grab loot`); }
   $('hp-fill').style.width = clamp(me.hp, 0, 100) + '%';
+  $('armor-bar').style.display = me.armor > 0 ? 'block' : 'none';
+  $('armor-fill').style.width = clamp(me.armor, 0, 100) + '%';
+  $('stam-fill').style.width = clamp(S.stam, 0, STAM_MAX) + '%';
+  $('stam-fill').classList.toggle('exh', S.exh);
   setText('hp-text', String(Math.max(0, Math.round(me.hp))));
   const def = S.items[me.weapon] || S.items.pistol;
   setText('weapon-name', def ? def.name : 'Pistol');
-  setText('ammo-info', `Ammo ${me.ammo | 0}`);
-  $('ammo-info').classList.toggle('low', (me.ammo | 0) <= 15);
+  const melee = !!(def && def.melee);
+  setText('ammo-info', melee ? 'Melee - no ammo needed' : `Ammo ${me.ammo | 0}`);
+  $('ammo-info').classList.toggle('low', !melee && (me.ammo | 0) <= 15);
   setText('bag-info', me.bag ? `Heals x${me.bag}  [H]` : '');
   // players list
   let html = '';
@@ -609,8 +683,8 @@ function updateHud(me, myGrave) {
     db.style.display = 'block';
     const prog = myGrave ? Math.floor(myGrave[3]) : 0;
     const msg = S.mode === 'pvp'
-      ? `YOU WERE KILLED<span class="rs">${Math.max(1, me.rs || S.respawn)}</span><small>Respawning...<br>Press TAB to switch who you watch.</small>`
-      : `YOU DIED<small>A teammate must stand on your grave for ${S.revive}s to revive you${prog ? ` (${prog}/${S.revive}s)` : ''}.<br>Press TAB to switch who you watch.</small>`;
+      ? `YOU WERE KILLED<span class="rs">${Math.max(1, me.rs || S.respawn)}</span><small>Respawning...<br>TAB / \u2190 \u2192 / click: watch another player</small><span class="spec">Watching: ${escapeHtml(S.specName || 'nobody left')}</span>`
+      : `YOU DIED<small>A teammate must stand on your grave for ${S.revive}s to revive you${prog ? ` (${prog}/${S.revive}s)` : ''}.<br>TAB / \u2190 \u2192 / click: watch another player</small><span class="spec">Watching: ${escapeHtml(S.specName || 'nobody left')}</span>`;
     if (hudCache.db !== msg) { hudCache.db = msg; db.innerHTML = msg; }
   } else db.style.display = 'none';
 }

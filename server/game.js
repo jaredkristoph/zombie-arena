@@ -6,6 +6,8 @@ const DT = 1 / TICK_HZ;
 const PLAYER_R = 0.38, PLAYER_SPEED = 5.2, PLAYER_HP = 100, BAG_MAX = 4;
 const PICK_R = 1.6, GRAVE_R = 1.5, REVIVE_SECONDS = 30, BREAK_SECONDS = 8, MAX_ALIVE = 45;
 const AMMO_START = 90, AMMO_MAX = 240, WAVE_AMMO = 25, AMMO_PICK_R = 0.95, ACC_COUNT = 14;
+// sprint (Shift): fast but tiring, and you can't shoot while doing it
+const STAM_MAX = 100, SPRINT_MULT = 1.4, SPRINT_DRAIN = 30, STAM_REGEN = 14, SPRINT_DELAY = 1, STAM_RESUME = 30;
 const RESPAWN_SECONDS = 10, SPAWN_PROTECT = 2, PVP_ITEM_EVERY = 25, MAX_BOTS = 7;
 const BOT_NAMES = ['Rex', 'Nova', 'Blitz', 'Vex', 'Ghost', 'Rogue', 'Viper', 'Echo'];
 // bot skill per difficulty: aim error (rad), turn speed (rad/s), reaction delay (s)
@@ -40,6 +42,13 @@ class Room {
     this.name = cfg.name;
     this.map = cfg.map;
     this.itemDefs = cfg.items; // id -> def
+    // which weapons exist in this room, and what everybody starts with
+    const weaponIds = Object.keys(this.itemDefs).filter((k) => this.itemDefs[k].type === 'weapon');
+    let allowed = Array.isArray(cfg.allowed) ? cfg.allowed.filter((id) => weaponIds.includes(id)) : weaponIds;
+    if (!allowed.length) allowed = weaponIds.includes('pistol') ? ['pistol'] : weaponIds.slice(0, 1);
+    this.allowed = new Set(allowed);
+    this.startWeapon = this.allowed.has(cfg.start) ? cfg.start : (this.allowed.has('pistol') ? 'pistol' : allowed[0]);
+    this.deathDrop = cfg.deathDrop !== false; // pvp: a random item falls where a player dies
     this.waves = cfg.waves; // 0 = endless
     this.difficulty = DIFF[cfg.difficulty] ? cfg.difficulty : 'normal';
     this.d = DIFF[this.difficulty];
@@ -90,7 +99,7 @@ class Room {
   }
   weapon(id) {
     const w = this.itemDefs[id];
-    return w && w.type === 'weapon' ? w : this.itemDefs.pistol;
+    return w && w.type === 'weapon' ? w : (this.itemDefs[this.startWeapon] || this.itemDefs.pistol);
   }
   alivePlayers() {
     const out = [];
@@ -118,7 +127,7 @@ class Room {
     return {
       id: this.id, name: this.name, map: this.map.name, waves: this.waves, difficulty: this.difficulty,
       max: this.maxPlayers, count: this.players.size, state: this.state, host: this.hostId,
-      mode: this.mode, killLimit: this.killLimit, bots: this.botCount(),
+      mode: this.mode, killLimit: this.killLimit, bots: this.botCount(), drops: this.deathDrop, start: this.startWeapon, weapons: [...this.allowed],
     };
   }
   sendRoom() {
@@ -171,9 +180,9 @@ class Room {
     const used = new Set([...this.players.values()].map((p) => p.color));
     const color = COLORS.find((c) => !used.has(c)) || COLORS[this.players.size % COLORS.length];
     const p = {
-      id: conn.id, name: conn.name, color, conn, x: 0, y: 0, a: 0, hp: PLAYER_HP, weapon: 'pistol', bag: [],
+      id: conn.id, name: conn.name, color, conn, x: 0, y: 0, a: 0, hp: PLAYER_HP, weapon: this.startWeapon, bag: [],
       dead: false, cd: 0, shoot: false, kills: 0, seq: 0, budget: 0.3, lastIn: Date.now(), gsent: -1, deaths: 0,
-      rs: 0, inv: 0, aimSet: false, ammo: AMMO_START, acc: (conn.acc | 0) % ACC_COUNT,
+      rs: 0, inv: 0, aimSet: false, ammo: AMMO_START, stam: STAM_MAX, exh: false, sprinting: false, sDelay: 0, acc: (conn.acc | 0) % ACC_COUNT,
     };
     this.players.set(p.id, p);
     if (this.hostId == null) this.hostId = p.id;
@@ -226,7 +235,7 @@ class Room {
     const sp = this.mode === 'pvp' ? this.respawnSpot(p) : this.map.playerSpawns[Math.floor(rand() * this.map.playerSpawns.length)];
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = 'pistol'; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false;
   }
   // pvp respawn: the spawn point farthest from every living enemy
   respawnSpot(p) {
@@ -245,7 +254,7 @@ class Room {
     const sp = this.respawnSpot(p);
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = 'pistol'; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false;
     this.ev.push(['r', p.id]);
   }
   startGame() {
@@ -279,7 +288,17 @@ class Room {
     this.sendRoom();
   }
 
-  lootIds() { return Object.keys(this.itemDefs).filter((k) => k !== 'pistol' && this.itemDefs[k].type !== 'ammo'); }
+  // things that may lie around / drop: allowed weapons (except the one you already start with) and heal items
+  lootIds() {
+    return Object.keys(this.itemDefs).filter((k) => {
+      const d = this.itemDefs[k];
+      return d.type === 'heal' || (d.type === 'weapon' && this.allowed.has(k) && k !== this.startWeapon);
+    });
+  }
+  itemOk(id) {
+    const d = this.itemDefs[id];
+    return !!d && (d.type !== 'weapon' || this.allowed.has(id));
+  }
   spawnMapItems(force) {
     const ids = this.lootIds();
     for (const s of this.map.itemSpawns) {
@@ -287,7 +306,7 @@ class Room {
       if (this.ground.some((g) => !g.ttl && Math.abs(g.x - cx) < 0.6 && Math.abs(g.y - cy) < 0.6)) continue;
       if (!force && rand() < 0.35) continue;
       let item = s.item;
-      if (item === 'random' || !this.itemDefs[item]) item = this.itemDefs.ammo && rand() < 0.35 ? 'ammo' : ids[Math.floor(rand() * ids.length)];
+      if (item === 'random' || !this.itemOk(item)) item = this.itemDefs.ammo && rand() < 0.35 ? 'ammo' : ids[Math.floor(rand() * ids.length)];
       if (item) this.addGround(cx, cy, item, 0);
     }
   }
@@ -314,11 +333,22 @@ class Room {
     const dt = Math.min(Math.max(Number(m.dt) || 0, 0), 100) / 1000;
     const use = Math.min(dt, p.budget);
     p.budget -= use;
+    // sprint: only while moving, with stamina, and not while exhausted. Stamina is spent per second actually sprinted.
+    const wantSprint = m.sp === 1 || m.sp === true;
+    let sprintT = 0;
     if (len > 0.01 && use > 0) {
       dx /= len; dy /= len;
       if (aim === null) p.a = Math.atan2(dy, dx);
-      this.move(p, dx * PLAYER_SPEED * use, dy * PLAYER_SPEED * use, PLAYER_R);
+      if (wantSprint && !p.exh && p.stam > 0) {
+        sprintT = Math.min(use, p.stam / SPRINT_DRAIN);
+        p.stam -= sprintT * SPRINT_DRAIN;
+        p.sDelay = SPRINT_DELAY;
+        if (p.stam <= 0.001) { p.stam = 0; p.exh = true; }
+      }
+      const dist = PLAYER_SPEED * (sprintT * SPRINT_MULT + (use - sprintT));
+      this.move(p, dx * dist, dy * dist, PLAYER_R);
     }
+    p.sprinting = sprintT > 0 && !p.exh;
   }
   act(p, k) {
     if (this.state !== 'playing' || p.dead) return;
@@ -338,7 +368,7 @@ class Room {
         if (p.bag.length >= BAG_MAX) { p.conn.send({ t: 'toast', text: 'Bag full (max ' + BAG_MAX + ')' }); return; }
         p.bag.push(def.id);
       } else {
-        if (p.weapon !== 'pistol') this.addGround(best.x, best.y, p.weapon, 0);
+        if (p.weapon !== this.startWeapon) this.addGround(best.x, best.y, p.weapon, 0);
         p.weapon = def.id;
         p.cd = 0.25;
       }
@@ -346,9 +376,9 @@ class Room {
       this.gver++;
       this.ev.push(['u', p.id]);
     } else if (k === 'drop') {
-      if (p.weapon === 'pistol') return;
+      if (p.weapon === this.startWeapon) return;
       this.addGround(p.x + Math.cos(p.a) * 0.9, p.y + Math.sin(p.a) * 0.9, p.weapon, 0);
-      p.weapon = 'pistol';
+      p.weapon = this.startWeapon;
     } else if (k === 'dropheal') {
       if (!p.bag.length) return;
       this.addGround(p.x + Math.cos(p.a) * 0.9, p.y + Math.sin(p.a) * 0.9, p.bag.pop(), 0);
@@ -361,10 +391,32 @@ class Room {
   }
 
   // ---------- combat ----------
+  // swords: a wide arc in front of you, no bullets used
+  swing(p, w) {
+    p.cd = 1 / w.rate;
+    p.inv = 0;
+    const pvp = this.mode === 'pvp';
+    const targets = pvp ? this.alivePlayers().filter((q) => q.id !== p.id && !(q.inv > 0)) : this.zombies.slice();
+    const arc = w.arc || 1.7, half = arc / 2;
+    let hit = 0;
+    for (const z of targets) {
+      if (this.state !== 'playing') break;
+      if (z.dead) continue;
+      const r = pvp ? PLAYER_R + 0.1 : z.r;
+      const ox = z.x - p.x, oy = z.y - p.y, d = Math.hypot(ox, oy);
+      if (d > w.range + r) continue;
+      if (d > 0.45 && Math.abs(normAng(Math.atan2(oy, ox) - p.a)) > half + Math.atan2(r, d)) continue;
+      if (d > r + 0.1 && this.rayWall(p.x, p.y, ox / d, oy / d, d) < d - 0.3) continue; // not through walls
+      hit = 1;
+      if (pvp) this.damagePlayer(z, w.damage, p); else this.damageZombie(z, w.damage, p);
+    }
+    this.ev.push(['w', p.id, r2(p.x), r2(p.y), r2(p.a), w.range, arc, hit, w.id]);
+  }
   fire(p) {
+    const w = this.weapon(p.weapon);
+    if (w.melee) return this.swing(p, w);
     if (p.ammo <= 0) { p.cd = 0.3; this.ev.push(['e', p.id]); return; }
     p.ammo--;
-    const w = this.weapon(p.weapon);
     p.cd = 1 / w.rate;
     p.inv = 0; // shooting ends spawn protection
     const pvp = this.mode === 'pvp';
@@ -420,7 +472,7 @@ class Room {
     if (this.mode === 'pvp') return this.diePvp(p, killer);
     p.dead = true; p.hp = 0; p.shoot = false; p.deaths++;
     this.graves.push({ pid: p.id, name: p.name, x: p.x, y: p.y, prog: 0 });
-    if (p.weapon !== 'pistol') { this.addGround(p.x, p.y, p.weapon, 0); p.weapon = 'pistol'; }
+    if (p.weapon !== this.startWeapon) { this.addGround(p.x, p.y, p.weapon, 0); p.weapon = this.startWeapon; }
     p.bag = [];
     this.ev.push(['d', p.id]);
     this.say(`${p.name} was eaten! Stand on the grave for ${this.reviveSeconds}s to revive them.`);
@@ -429,9 +481,15 @@ class Room {
   // pvp: no graves, you come back on your own after RESPAWN_SECONDS
   diePvp(p, killer) {
     p.dead = true; p.hp = 0; p.shoot = false; p.deaths++; p.rs = RESPAWN_SECONDS; p.inv = 0;
-    if (p.weapon !== 'pistol') { this.addGround(p.x, p.y, p.weapon, 30); p.weapon = 'pistol'; }
+    if (this.deathDrop) {
+      // room option: whatever you carried, plus one random gun / heal item and some ammo, falls where you died
+      if (p.weapon !== this.startWeapon) this.addGround(p.x, p.y, p.weapon, 30);
+      const ids = this.lootIds();
+      if (ids.length) this.addGround(p.x + (rand() - 0.5) * 0.9, p.y + (rand() - 0.5) * 0.9, ids[Math.floor(rand() * ids.length)], 30);
+      if (this.itemDefs.ammo && p.ammo >= 20) this.addGround(p.x + 0.4, p.y, 'ammo', 30);
+    }
+    p.weapon = this.startWeapon;
     p.bag = [];
-    if (this.itemDefs.ammo && p.ammo >= 20) this.addGround(p.x + 0.4, p.y, 'ammo', 30);
     this.ev.push(['d', p.id]);
     const k = killer && killer.id !== p.id ? killer : null;
     if (k) k.kills++;
@@ -502,13 +560,13 @@ class Room {
 
     // loot worth walking to when no fight is on
     let item = null, nearest = null, nd = PICK_R * PICK_R;
-    if (!(los && dist < 12) || p.ammo < 10) {
+    if (!(los && dist < 12) || (p.ammo < 10 && !w.melee)) {
       const cur = dps(w);
       let bs = 18 * 18;
       for (const g of this.ground) {
         const def = this.itemDefs[g.item];
         if (!def) continue;
-        const want = def.type === 'ammo' ? p.ammo < 45 : def.type === 'heal' ? p.hp < 80 && p.bag.length < BAG_MAX : dps(def) > cur * 1.15;
+        const want = def.type === 'ammo' ? p.ammo < 45 && !w.melee : def.type === 'heal' ? p.hp < 80 && p.bag.length < BAG_MAX : dps(def) > cur * 1.15;
         if (!want) continue;
         const d = (g.x - p.x) ** 2 + (g.y - p.y) ** 2;
         if (d < bs) { bs = d; item = g; }
@@ -523,7 +581,7 @@ class Room {
     let mx = 0, my = 0, want = null, shoot = false;
     const combat = tgt && los && dist < 13 && !item;
     if (combat) {
-      const ideal = w.range <= 9 ? 3.5 : w.range >= 25 ? 12 : 6.5;
+      const ideal = w.melee ? Math.max(0.8, w.range * 0.55) : w.range <= 9 ? 3.5 : w.range >= 25 ? 12 : 6.5;
       const ux = (tgt.x - p.x) / dist, uy = (tgt.y - p.y) / dist;
       const radial = dist > ideal + 1.5 ? 1 : dist < ideal - 1.5 ? -1 : 0;
       if (ai.strafeT <= 0) { ai.strafeT = 0.8 + rand() * 1.4; if (rand() < 0.6) ai.strafe *= -1; }
@@ -531,7 +589,7 @@ class Room {
       my = uy * radial + ux * ai.strafe * 0.9;
       want = Math.atan2(tgt.y - p.y, tgt.x - p.x) + ai.aimErr;
       const diff = Math.abs(normAng(want - p.a));
-      shoot = p.ammo > 0 && ai.seeT >= sk.react && dist < w.range * 0.95 && diff < 0.2 && !(tgt.inv > 0);
+      shoot = (w.melee || p.ammo > 0) && ai.seeT >= sk.react && dist < w.range * 0.95 && diff < 0.2 && !(tgt.inv > 0);
     } else {
       let goal = null;
       if (item) goal = [item.x, item.y];
@@ -590,10 +648,18 @@ class Room {
         continue;
       }
       if (p.inv > 0) p.inv -= DT;
+      if (p.sprinting && Date.now() - p.lastIn > 250) p.sprinting = false;
+      if (!p.sprinting) {
+        if ((p.sDelay -= DT) <= 0) {
+          p.sDelay = 0;
+          p.stam = Math.min(STAM_MAX, p.stam + STAM_REGEN * DT);
+          if (p.exh && p.stam >= STAM_RESUME) p.exh = false;
+        }
+      } else p.cd = Math.max(p.cd, 0.2); // weapon is lowered while running
       if (p.ammo < AMMO_MAX) this.autoPickAmmo(p);
       if (p.bot) this.botThink(p);
       p.cd -= DT;
-      if (p.shoot && p.cd <= 0 && this.state === 'playing') this.fire(p);
+      if (p.shoot && p.cd <= 0 && !p.sprinting && this.state === 'playing') this.fire(p);
     }
     if (this.state !== 'playing') { this.ev = []; return; }
     if (pvp) {
@@ -745,7 +811,7 @@ class Room {
         const p = this.players.get(g.pid);
         this.graves.splice(i, 1);
         if (!p) continue;
-        p.dead = false; p.hp = PLAYER_HP / 2; p.x = g.x; p.y = g.y; p.weapon = 'pistol'; p.bag = []; p.cd = 0.5; p.ammo = AMMO_START;
+        p.dead = false; p.hp = PLAYER_HP / 2; p.x = g.x; p.y = g.y; p.weapon = 'pistol'; p.bag = []; p.cd = 0.5; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false;
         this.ev.push(['r', p.id]);
         this.say(`${rescuer.name} revived ${p.name}!`);
       }
@@ -755,7 +821,7 @@ class Room {
   sendSnapshot() {
     const base = {
       w: { n: this.wave, of: this.waves, ph: this.phase === 'wave' ? 1 : 0, tm: Math.ceil(Math.max(0, this.timer)), left: this.queue + this.zombies.length },
-      p: [...this.players.values()].map((p) => [p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 ? 1 : 0, p.deaths, p.ammo]),
+      p: [...this.players.values()].map((p) => [p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0]),
       z: this.zombies.map((z) => [z.id, r2(z.x), r2(z.y), z.type, Math.max(1, Math.round((z.hp / z.maxHp) * 100))]),
       gr: this.graves.map((g) => [g.pid, r2(g.x), r2(g.y), Math.round(g.prog * 10) / 10, g.name]),
       ev: this.ev,
@@ -771,4 +837,4 @@ class Room {
   }
 }
 
-module.exports = { ACC_COUNT, AMMO_START, AMMO_MAX, Room, TICK_HZ, DT, DIFF, REVIVE_SECONDS, RESPAWN_SECONDS };
+module.exports = { STAM_MAX, SPRINT_MULT, SPRINT_DRAIN, STAM_REGEN, ACC_COUNT, AMMO_START, AMMO_MAX, Room, TICK_HZ, DT, DIFF, REVIVE_SECONDS, RESPAWN_SECONDS };
