@@ -1,11 +1,16 @@
 'use strict';
 // Authoritative game room: players, zombies, waves, items, graves, chat.
+const { buildTerrain, canStep } = require('./terrain');
 
 const TICK_HZ = 20;
 const DT = 1 / TICK_HZ;
 const PLAYER_R = 0.38, PLAYER_SPEED = 5.2, PLAYER_HP = 100, BAG_MAX = 4;
 const PICK_R = 1.6, GRAVE_R = 1.5, REVIVE_SECONDS = 30, BREAK_SECONDS = 8, MAX_ALIVE = 45;
 const AMMO_START = 90, AMMO_MAX = 240, WAVE_AMMO = 25, AMMO_PICK_R = 0.95, ACC_COUNT = 35, FIT_COUNT = 20;
+// headshots: only the shot that KILLS can be one, and only HS_CHANCE of the time
+const HS_CHANCE = 0.05;
+// grenades (F): thrown along your aim, bounce off walls, explode after a fuse
+const NADE_MAX = 4, NADE_START = 1, NADE_FUSE = 1.7, NADE_SPEED = 11;
 const TEAM_COLORS = ['#ff595e', '#3a86ff'], TEAM_NAMES = ['Red', 'Blue'];
 // all weapon damage is scaled down so fights last longer; armor soaks part of every hit until it is used up
 const DMG_SCALE = 0.7, ARMOR_MAX = 100, ARMOR_ABSORB = 0.6;
@@ -63,8 +68,10 @@ class Room {
     this.reviveSeconds = cfg.reviveSeconds || REVIVE_SECONDS;
     this.W = this.map.w;
     this.H = this.map.h;
-    this.solidArr = new Uint8Array(this.W * this.H);
-    for (let y = 0; y < this.H; y++) for (let x = 0; x < this.W; x++) this.solidArr[y * this.W + x] = this.map.tiles[y][x] === '.' ? 0 : 1;
+    const ter = buildTerrain(this.map.tiles, this.W, this.H);
+    this.hAt = ter.heightAt;
+    this.baseSolid = ter.solid; this.baseSight = ter.sight; this.bushArr = ter.bush; this.doorIdx = ter.doors;
+    this.solidArr = new Uint8Array(ter.solid); this.sightArr = new Uint8Array(ter.sight); this.doorOpen = new Set();
     this.state = 'lobby';
     this.players = new Map();
     this.hostId = null;
@@ -76,6 +83,17 @@ class Room {
   // ---------- helpers ----------
   solid(tx, ty) {
     return tx < 0 || ty < 0 || tx >= this.W || ty >= this.H || this.solidArr[ty * this.W + tx] === 1;
+  }
+  sight(tx, ty) {
+    return tx < 0 || ty < 0 || tx >= this.W || ty >= this.H || this.sightArr[ty * this.W + tx] === 1;
+  }
+  inBush(e) { return this.bushArr[Math.floor(e.y) * this.W + Math.floor(e.x)]; } // 0 = not in a bush, else the id of that patch of bushes
+  // can viewer v see q? players inside a bush are hidden from everyone outside the bushes (pvp)
+  canSee(v, q) {
+    if (v === q || this.mode !== 'pvp' || q.dead || v.dead) return true;
+    const bq = this.inBush(q);
+    if (!bq || this.inBush(v) === bq) return true; // only people in the SAME patch of bushes see each other
+    return this.teams && v.team === q.team;
   }
   blocked(x, y, r) {
     const x0 = Math.floor(x - r), x1 = Math.floor(x + r), y0 = Math.floor(y - r), y1 = Math.floor(y + r);
@@ -92,13 +110,13 @@ class Room {
   // slides along walls; writes result into out
   move(e, dx, dy, r) {
     let nx = e.x + dx;
-    if (this.blocked(nx, e.y, r)) nx = e.x;
+    if (this.blocked(nx, e.y, r) || !canStep(this.hAt, e.x, e.y, nx, e.y)) nx = e.x;
     let ny = e.y + dy;
-    if (this.blocked(nx, ny, r)) ny = e.y;
+    if (this.blocked(nx, ny, r) || !canStep(this.hAt, nx, e.y, nx, ny)) ny = e.y;
     e.x = nx; e.y = ny;
   }
   rayWall(ox, oy, dx, dy, max) {
-    for (let d = 0.2; d <= max; d += 0.2) if (this.solid(Math.floor(ox + dx * d), Math.floor(oy + dy * d))) return d;
+    for (let d = 0.2; d <= max; d += 0.2) if (this.sight(Math.floor(ox + dx * d), Math.floor(oy + dy * d))) return d;
     return max;
   }
   weapon(id) {
@@ -141,7 +159,7 @@ class Room {
     });
   }
   initMsg(p) {
-    return { t: 'start', you: p.id, map: this.map, items: this.itemDefs, room: this.info(), revive: this.reviveSeconds, pickR: PICK_R, graveR: GRAVE_R, respawn: RESPAWN_SECONDS };
+    return { t: 'start', doors: [...this.doorOpen], you: p.id, map: this.map, items: this.itemDefs, room: this.info(), revive: this.reviveSeconds, pickR: PICK_R, graveR: GRAVE_R, respawn: RESPAWN_SECONDS };
   }
   humans() {
     let n = 0;
@@ -267,14 +285,58 @@ class Room {
     this.queue = 0;
     this.spawnT = 0;
     this.gver = 0;
+    this.nades = [];
+    this.resetDoors();
     this.tickN = 0;
     this.overT = 0;
+  }
+  resetDoors() {
+    this.solidArr.set(this.baseSolid); this.sightArr.set(this.baseSight);
+    for (const i of this.doorIdx) { this.solidArr[i] = 1; this.sightArr[i] = 1; }
+    this.doorOpen.clear();
+  }
+  // E: open / close the nearest door (and the doors touching it, so a double door moves together)
+  toggleDoor(p, quiet) {
+    let best = -1, bd = 1.9 * 1.9;
+    for (const i of this.doorIdx) {
+      const d = (((i % this.W) + 0.5) - p.x) ** 2 + (((i / this.W | 0) + 0.5) - p.y) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (best < 0) return false;
+    return this.setDoorGroup(p, best, !this.doorOpen.has(best), quiet);
+  }
+  setDoorGroup(p, start, open, quiet) {
+    const grp = [start], seen = new Set([start]);
+    for (let k = 0; k < grp.length && grp.length < 12; k++) {
+      const x = grp[k] % this.W, y = (grp[k] / this.W) | 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy, n = ny * this.W + nx;
+        if (nx < 0 || ny < 0 || nx >= this.W || ny >= this.H || seen.has(n) || !this.doorIdx.includes(n)) continue;
+        seen.add(n); grp.push(n);
+      }
+    }
+    if (!open) { // something standing in the doorway keeps it open
+      const blockers = [...this.players.values()].filter((q) => !q.dead).concat(this.zombies);
+      for (const i of grp) {
+        const cx = (i % this.W), cy = (i / this.W) | 0;
+        for (const q of blockers) {
+          const nx = Math.max(cx, Math.min(q.x, cx + 1)), ny = Math.max(cy, Math.min(q.y, cy + 1));
+          if ((q.x - nx) ** 2 + (q.y - ny) ** 2 < (PLAYER_R + 0.05) ** 2) { if (!quiet && p && p.conn) p.conn.send({ t: 'toast', text: 'Something is in the way' }); return true; }
+        }
+      }
+    }
+    for (const i of grp) {
+      if (open) this.doorOpen.add(i); else this.doorOpen.delete(i);
+      this.solidArr[i] = open ? 0 : 1; this.sightArr[i] = open ? 0 : 1;
+    }
+    this.ev.push(['o', open ? 1 : 0, grp]);
+    return true;
   }
   placePlayer(p) {
     const sp = this.mode === 'pvp' ? this.respawnSpot(p) : this.map.playerSpawns[Math.floor(rand() * this.map.playerSpawns.length)];
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0;
   }
   // pvp respawn: the spawn point farthest from every living enemy
   respawnSpot(p) {
@@ -293,7 +355,7 @@ class Room {
     const sp = this.respawnSpot(p);
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0;
     this.ev.push(['r', p.id]);
   }
   startGame() {
@@ -332,7 +394,7 @@ class Room {
   lootIds() {
     return Object.keys(this.itemDefs).filter((k) => {
       const d = this.itemDefs[k];
-      return d.type === 'heal' || d.type === 'armor' || (d.type === 'weapon' && this.allowed.has(k) && k !== this.startWeapon);
+      return d.type === 'heal' || d.type === 'armor' || d.type === 'grenade' || (d.type === 'weapon' && this.allowed.has(k) && k !== this.startWeapon);
     });
   }
   itemOk(id) {
@@ -357,6 +419,18 @@ class Room {
   }
 
   // ---------- input ----------
+  // A dash press: its own message (like chat / a shot) that is relayed to everyone at once; every browser then plays the roll itself.
+  // It is also sent inside the normal input message (dh), so whichever arrives first starts it and the other is ignored.
+  dash(p, dx, dy) {
+    if (p.dashT > 0 && p.dashStart && Date.now() - p.dashStart < 700) return; // (duplicate of the same press)
+    const why = this.state !== 'playing' ? 'room is ' + this.state : p.dead ? 'dead' : p.dashT > 0 ? 'already dashing' : p.stam < STAM_MAX * 0.85 ? 'charge ' + Math.round(p.stam) : '';
+    if (why) { p.conn.send({ t: 'dx', why }); return; }
+    const len = Math.hypot(dx, dy);
+    const ddx = len > 0.01 ? dx / len : Math.cos(p.a), ddy = len > 0.01 ? dy / len : Math.sin(p.a);
+    p.dashT = DASH_TIME; p.dashLeft = DASH_TIME; p.dinv = DASH_INV; p.stam = 0; p.dashStart = Date.now();
+    this.ev.push(['D', p.id]);
+    this.broadcast({ t: 'dd', id: p.id, x: r2(p.x), y: r2(p.y), dx: r2(ddx), dy: r2(ddy), b: p.boostT > 0 ? 1 : 0 });
+  }
   onInput(p, m) {
     if (this.state !== 'playing') return;
     const now = Date.now();
@@ -376,13 +450,7 @@ class Room {
     if (len > 0.01) { dx /= len; dy /= len; }
     // dash (Shift): needs a full charge. It is just a short burst of fast running (DASH_MULT x speed for DASH_TIME seconds of
     // movement) plus DASH_INV seconds of invincibility; the client draws it as a roll.
-    if ((m.dh === 1 || m.dh === true) && p.dashT <= 0 && p.stam >= STAM_MAX * 0.85) {
-      p.dashT = DASH_TIME; p.dashLeft = DASH_TIME; p.dinv = DASH_INV; p.stam = 0;
-      this.ev.push(['D', p.id]);
-      // tell everyone right now (like a shot) so every screen plays the same dash at the same moment: where it starts and which way it goes
-      const ddx = len > 0.01 ? dx : Math.cos(p.a), ddy = len > 0.01 ? dy : Math.sin(p.a);
-      this.broadcast({ t: 'dd', id: p.id, x: r2(p.x), y: r2(p.y), dx: r2(ddx), dy: r2(ddy), b: p.boostT > 0 ? 1 : 0 });
-    }
+    if ((m.dh === 1 || m.dh === true) && p.dashT <= 0) this.dash(p, dx, dy);
     if (len > 0.01 && use > 0) {
       if (aim === null) p.a = Math.atan2(dy, dx);
       let boost = 0;
@@ -399,12 +467,15 @@ class Room {
         const d = (g.x - p.x) ** 2 + (g.y - p.y) ** 2;
         if (d < bd) { bd = d; best = g; }
       }
-      if (!best) return;
+      if (!best) { this.toggleDoor(p); return; }
       const def = this.itemDefs[best.item];
       if (!def) return;
       if (def.type === 'ammo') {
         if (p.ammo >= AMMO_MAX) { p.conn.send({ t: 'toast', text: 'Ammo full' }); return; }
         p.ammo = Math.min(AMMO_MAX, p.ammo + (def.amount || 40));
+      } else if (def.type === 'grenade') {
+        if (p.nades >= NADE_MAX) { p.conn.send({ t: 'toast', text: 'Grenades full' }); return; }
+        p.nades = Math.min(NADE_MAX, p.nades + (def.amount || 1));
       } else if (def.type === 'armor') {
         if (p.armor >= ARMOR_MAX) { p.conn.send({ t: 'toast', text: 'Armor full' }); return; }
         p.armor = Math.min(ARMOR_MAX, p.armor + (def.amount || 40));
@@ -423,6 +494,8 @@ class Room {
       if (p.weapon === this.startWeapon) return;
       this.addGround(p.x + Math.cos(p.a) * 0.9, p.y + Math.sin(p.a) * 0.9, p.weapon, 0);
       p.weapon = this.startWeapon;
+    } else if (k === 'nade') {
+      this.throwNade(p);
     } else if (k === 'dropheal') {
       if (!p.bag.length) return;
       this.addGround(p.x + Math.cos(p.a) * 0.9, p.y + Math.sin(p.a) * 0.9, p.bag.pop(), 0);
@@ -467,6 +540,7 @@ class Room {
     // targets: other players that are alive and not spawn-protected (pvp) or zombies (co-op)
     const targets = pvp ? this.alivePlayers().filter((q) => this.foe(p, q) && !(q.inv > 0 || q.dinv > 0)) : this.zombies;
     const tr = pvp ? PLAYER_R + 0.1 : 0;
+    p.sentHs = 0;
     for (let i = 0; i < w.pellets; i++) {
       const ang = p.a + (rand() - 0.5) * 2 * w.spread;
       const dx = Math.cos(ang), dy = Math.sin(ang);
@@ -483,14 +557,18 @@ class Room {
         hits.push({ z, t: Math.max(0, t - Math.sqrt(r * r - perp2)) });
       }
       hits.sort((a, b) => a.t - b.t);
-      let len = wallD, hit = 0;
+      let len = wallD, hit = 0, head = 0;
       const n = Math.min(hits.length, 1 + w.pierce);
       for (let k = 0; k < n; k++) {
         if (hits[k].t > wallD) break;
-        if (pvp) this.damagePlayer(hits[k].z, w.damage, p); else this.damageZombie(hits[k].z, w.damage, p);
+        const dmg = w.damage, z = hits[k].z;
+        const real = dmg * DMG_SCALE, soak = pvp ? Math.min(z.armor, real * ARMOR_ABSORB) : 0;
+        const hs = !z.dead && z.hp - (real - soak) <= 0 && rand() < HS_CHANCE; // the killing shot, 1 in 20
+        if (pvp) this.damagePlayer(hits[k].z, dmg, p); else this.damageZombie(hits[k].z, dmg, p);
         len = hits[k].t; hit = 1;
+        if (hs) { head = 1; if (p.conn && !p.ai && !p.sentHs) { p.sentHs = 1; p.conn.send({ t: 'hs' }); } }
       }
-      this.ev.push(['s', r2(p.x), r2(p.y), r2(ang), r2(len), hit, w.id]);
+      this.ev.push(['s', r2(p.x), r2(p.y), r2(ang), r2(len), hit, w.id, head]);
     }
   }
   // damage to a player: armor soaks ARMOR_ABSORB of it until it is gone
@@ -561,7 +639,8 @@ class Room {
     const n = Math.ceil(d / 0.25);
     for (let i = 1; i <= n; i++) {
       const f = i / n;
-      if (this.blocked(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, r)) return false;
+      const cx = x0 + (x1 - x0) * f, cy = y0 + (y1 - y0) * f;
+      if (this.blocked(cx, cy, r) || !canStep(this.hAt, x0 + (x1 - x0) * (i - 1) / n, y0 + (y1 - y0) * (i - 1) / n, cx, cy)) return false;
     }
     return true;
   }
@@ -570,7 +649,7 @@ class Room {
     sx = Math.max(0, Math.min(W - 1, sx)); sy = Math.max(0, Math.min(H - 1, sy));
     tx = Math.max(0, Math.min(W - 1, tx)); ty = Math.max(0, Math.min(H - 1, ty));
     const s = sy * W + sx, g = ty * W + tx;
-    if (this.solidArr[g] || s === g) return [];
+    if (this.baseSolid[g] || s === g) return [];
     const prev = new Int32Array(N).fill(-1), q = new Int32Array(N);
     let h = 0, t = 0;
     prev[s] = s; q[t++] = s;
@@ -582,7 +661,8 @@ class Room {
         const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0), ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
         const n = ny * W + nx;
-        if (prev[n] !== -1 || this.solidArr[n]) continue;
+        if (prev[n] !== -1 || this.baseSolid[n]) continue;
+        if (!canStep(this.hAt, cx + 0.5, cy + 0.5, nx + 0.5, ny + 0.5)) continue;
         prev[n] = c; q[t++] = n;
       }
     }
@@ -598,7 +678,7 @@ class Room {
     // nearest living enemy + line of sight
     let tgt = null, bd = Infinity;
     for (const q of this.players.values()) {
-      if (q === p || q.dead || !this.foe(p, q)) continue;
+      if (q === p || q.dead || !this.foe(p, q) || !this.canSee(p, q)) continue;
       const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
       if (d < bd) { bd = d; tgt = q; }
     }
@@ -707,7 +787,9 @@ class Room {
       if (p.boostT > 0) p.boostT -= DT;
       if (p.dashT > 0) p.dashT -= DT; // (rolling: no shooting)
       else p.stam = Math.min(STAM_MAX, p.stam + (STAM_MAX / DASH_CD) * DT);
-      if (p.ammo < AMMO_MAX) this.autoPickAmmo(p);
+      this.autoPickup(p);
+      if (p.nadeCd > 0) p.nadeCd -= DT;
+      if (p.bot && this.tickN % 6 === 0) for (const i of this.doorIdx) if (!this.doorOpen.has(i) && (((i % this.W) + 0.5) - p.x) ** 2 + (((i / this.W | 0) + 0.5) - p.y) ** 2 < 2.6) { this.setDoorGroup(p, i, true, true); break; }
       if (p.bot) this.botThink(p);
       p.cd -= DT;
       if (p.shoot && p.cd <= 0 && !(p.dashT > 0) && this.state === 'playing') this.fire(p);
@@ -720,6 +802,7 @@ class Room {
       this.updateZombies();
       this.updateGraves();
     }
+    if (this.state === 'playing') this.updateNades();
     for (let i = this.ground.length - 1; i >= 0; i--) {
       const g = this.ground[i];
       if (g.ttl && (g.ttl -= DT) <= 0) { this.ground.splice(i, 1); this.gver++; }
@@ -728,18 +811,65 @@ class Room {
     this.ev = [];
   }
 
-  autoPickAmmo(p) {
+  // walking over things picks them up: ammo, grenades, armor that is better than yours (swap), and heals in pvp when hurt
+  autoPickup(p) {
     for (let i = 0; i < this.ground.length; i++) {
       const g = this.ground[i];
       if ((g.x - p.x) ** 2 + (g.y - p.y) ** 2 > AMMO_PICK_R * AMMO_PICK_R) continue;
       const def = this.itemDefs[g.item];
-      if (!def || def.type !== 'ammo') continue;
-      p.ammo = Math.min(AMMO_MAX, p.ammo + (def.amount || 40));
+      if (!def) continue;
+      if (def.type === 'ammo' && p.ammo < AMMO_MAX) p.ammo = Math.min(AMMO_MAX, p.ammo + (def.amount || 40));
+      else if (def.type === 'grenade' && p.nades < NADE_MAX) p.nades = Math.min(NADE_MAX, p.nades + (def.amount || 1));
+      else if (def.type === 'armor' && (def.amount || 40) > p.armor) p.armor = Math.min(ARMOR_MAX, def.amount || 40);
+      else if (def.type === 'heal' && this.mode === 'pvp' && p.hp < PLAYER_HP) { p.hp = Math.min(PLAYER_HP, p.hp + (def.heal || 25)); this.ev.push(['m', p.id]); }
+      else continue;
       this.ground.splice(i, 1);
       this.gver++;
       this.ev.push(['u', p.id]);
       return;
     }
+  }
+
+  // ---------- grenades ----------
+  throwNade(p) {
+    if (p.nades <= 0 || p.nadeCd > 0 || p.dead || this.state !== 'playing') return;
+    p.nades--; p.nadeCd = 0.6; p.inv = 0;
+    const dx = Math.cos(p.a), dy = Math.sin(p.a);
+    // start a little ahead of you, but never inside a wall
+    let sx = p.x, sy = p.y;
+    for (const d of [0.7, 0.5, 0.3]) if (!this.sight(Math.floor(p.x + dx * d), Math.floor(p.y + dy * d))) { sx = p.x + dx * d; sy = p.y + dy * d; break; }
+    this.nades.push({ id: this.nextId++, owner: p.id, x: sx, y: sy, vx: dx * NADE_SPEED, vy: dy * NADE_SPEED, t: NADE_FUSE });
+    this.ev.push(['t', p.id]);
+  }
+  updateNades() {
+    for (let i = this.nades.length - 1; i >= 0; i--) {
+      const n = this.nades[i];
+      n.t -= DT;
+      const nx = n.x + n.vx * DT, ny = n.y + n.vy * DT;
+      if (this.sight(Math.floor(nx), Math.floor(n.y))) n.vx = -n.vx * 0.5; else n.x = nx;
+      if (this.sight(Math.floor(n.x), Math.floor(ny))) n.vy = -n.vy * 0.5; else n.y = ny;
+      n.vx *= 0.93; n.vy *= 0.93;
+      if (n.t <= 0) { this.nades.splice(i, 1); this.explode(n); if (this.state !== 'playing') return; }
+    }
+  }
+  explode(n) {
+    const def = this.itemDefs.grenade || { damage: 80, radius: 3.2 };
+    const R = def.radius || 3.2, owner = this.players.get(n.owner);
+    this.ev.push(['g', r2(n.x), r2(n.y), R]);
+    const pvp = this.mode === 'pvp';
+    const hit = (e, rad, isPlayer) => {
+      const d = Math.hypot(e.x - n.x, e.y - n.y);
+      if (d > R + rad) return;
+      if (d > 0.4 && this.rayWall(n.x, n.y, (e.x - n.x) / d, (e.y - n.y) / d, d) < d - 0.3) return; // walls shield you
+      let dmg = def.damage * (1 - 0.7 * Math.min(1, d / R));
+      if (isPlayer) {
+        if (e.inv > 0 || e.dinv > 0) return;
+        if (owner && e.id === owner.id) dmg *= 0.5;
+        this.damagePlayer(e, dmg, owner);
+      } else this.damageZombie(e, dmg, owner || { kills: 0 });
+    };
+    if (pvp) for (const q of this.alivePlayers()) { if (this.state !== 'playing') break; if (!owner || q.id === owner.id || this.foe(owner, q)) hit(q, PLAYER_R, true); }
+    else for (const z of this.zombies.slice()) { if (!z.dead) hit(z, z.r, false); }
   }
 
   updateWave() {
@@ -870,20 +1000,27 @@ class Room {
   }
 
   sendSnapshot() {
-    const base = {
-      w: { n: this.wave, of: this.waves, ph: this.phase === 'wave' ? 1 : 0, tm: Math.ceil(Math.max(0, this.timer)), left: this.queue + this.zombies.length },
-      p: [...this.players.values()].map((p) => [p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 || p.dinv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0, Math.round(p.armor), p.dashT > 0 ? 1 : 0, p.boostT > 0 ? 1 : 0]),
+    const rest = {
       z: this.zombies.map((z) => [z.id, r2(z.x), r2(z.y), z.type, Math.max(1, Math.round((z.hp / z.maxHp) * 100))]),
       gr: this.graves.map((g) => [g.pid, r2(g.x), r2(g.y), Math.round(g.prog * 10) / 10, g.name]),
+      gn: this.nades.map((n) => [n.id, r2(n.x), r2(n.y)]),
       ev: this.ev,
     };
-    const baseStr = JSON.stringify(base).slice(1);
+    const wStr = JSON.stringify({ n: this.wave, of: this.waves, ph: this.phase === 'wave' ? 1 : 0, tm: Math.ceil(Math.max(0, this.timer)), left: this.queue + this.zombies.length });
+    const restStr = JSON.stringify(rest).slice(1);
+    const all = [...this.players.values()];
+    const tup = all.map((p) => JSON.stringify([p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 || p.dinv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0, Math.round(p.armor), p.dashT > 0 ? 1 : 0, p.boostT > 0 ? 1 : 0, p.nades]));
+    const hid = all.map((p) => JSON.stringify([p.id, 0, 0, 0, Math.max(0, Math.round(p.hp)), p.weapon, 0, 0, p.kills, 0, 0, p.deaths, 0, 0, 0, 0, 0, 0, 0, 1]));
     const gStr = JSON.stringify(this.ground.map((g) => [g.id, r2(g.x), r2(g.y), g.item]));
-    for (const p of this.players.values()) {
+    const open = this.mode === 'pvp' ? all.some((q) => !q.dead && this.inBush(q)) : false;
+    const everyone = '[' + tup.join(',') + ']';
+    for (const p of all) {
       if (p.bot) continue;
       let head = '{"a":' + p.seq;
       if (p.gsent !== this.gver) { head += ',"g":' + gStr; p.gsent = this.gver; }
-      p.conn.raw(head + ',"t":"s",' + baseStr);
+      // hidden players stay in the list (name, score) but get no position: flag 19 = hidden
+      const pl = open ? '[' + all.map((q, i) => (this.canSee(p, q) ? tup[i] : hid[i])).join(',') + ']' : everyone;
+      p.conn.raw(head + ',"t":"s","w":' + wStr + ',"p":' + pl + ',' + restStr);
     }
   }
 }

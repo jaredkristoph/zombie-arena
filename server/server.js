@@ -19,6 +19,7 @@ const MAX_CONN_PER_IP = 10;
 
 // ---------- persistent content ----------
 const store = { maps: [], items: [], seeded: [] };
+const sanitizeMapKeep = (m) => { const c = sanitizeMap(m); c.builtin = true; return c; };
 function loadStore() {
   try {
     const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
@@ -35,9 +36,15 @@ function loadStore() {
     if (k && k.builtin && k.damage === 26) k.damage = 13;
     store.seeded.push('katana-v2');
   }
+  // Dead Town was redesigned (ramps, doors, bushes, water; once; a map the admin made or renamed is left alone)
+  if (!store.seeded.includes('deadtown-v3')) {
+    const i = store.maps.findIndex((m) => m.id === 'dead-town' && m.builtin);
+    if (i >= 0) store.maps[i] = sanitizeMapKeep(buildDefaultMaps()[0]);
+    store.seeded.push('deadtown-v3');
+  }
   // items added in later versions are seeded once into existing data files (and can then be deleted by the admin)
   for (const d of DEFAULT_ITEMS) {
-    if (!['ammo', 'sword', 'katana', 'greatsword', 'vest', 'plate'].includes(d.id) || store.seeded.includes(d.id)) continue;
+    if (!['ammo', 'sword', 'katana', 'greatsword', 'vest', 'plate', 'grenade'].includes(d.id) || store.seeded.includes(d.id)) continue;
     if (!store.items.some((i) => i.id === d.id)) store.items.push({ ...d });
     store.seeded.push(d.id);
   }
@@ -272,7 +279,7 @@ function onMessage(c, m) {
         takeOver(c, back.room, back.player, back.old);
       } else if (!c.token) c.token = crypto.randomBytes(12).toString('hex');
       liveByToken.set(c.token, c);
-      c.send({ t: 'hello_ok', dash: 1, teams: 1, token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
+      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b25', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
       if (back) { back.room.resume(back.player); pushRooms(); return; }
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;
@@ -315,6 +322,7 @@ function onMessage(c, m) {
       return;
     }
     case 'endgame': if (c.room && c.player && c.room.hostId === c.id) { c.room.endByHost(); pushRooms(); } return;
+    case 'dash': if (c.player && c.room) c.room.dash(c.player, Number(m.dx) || 0, Number(m.dy) || 0); return;
     case 'team': if (c.room && c.player) c.room.setTeam(c.player, Number(m.team)); return;
     case 'addbot': {
       if (!c.room || !c.player) return;

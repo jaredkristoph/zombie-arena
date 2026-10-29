@@ -14,12 +14,42 @@ export const PLAYER_SPEED = 5.2;
 // dash (keep in sync with server/game.js)
 export const STAM_MAX = 100, DASH_TIME = 0.55, DASH_MULT = 2.4, KILL_BOOST = 1.2, DASH_CD = 3;
 
+// Terrain (keep in sync with server/terrain.js): 'H' high ground, '^' 'v' '<' '>' ramps climbing toward -y / +y / -x / +x
+export const STEP_MAX = 0.45;
 export function makeGrid(map) {
-  const g = { w: map.w, h: map.h, solid: new Uint8Array(map.w * map.h) };
-  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) g.solid[y * map.w + x] = map.tiles[y][x] === '.' ? 0 : 1;
+  const W = map.w, H = map.h, n = W * H;
+  const g = { w: W, h: H, solid: new Uint8Array(n), kind: new Uint8Array(n), lo: new Float32Array(n), hi: new Float32Array(n), doors: [], bush: new Uint8Array(n) };
+  const at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H ? '#' : map.tiles[y][x]);
+  const DIRS = { '^': [0, -1], v: [0, 1], '<': [-1, 0], '>': [1, 0] };
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const c = map.tiles[y][x], i = y * W + x;
+    g.solid[i] = c === '#' || c === 'c' || c === 'w' || c === 'D' ? 1 : 0; // (water blocks walking; doors start closed)
+    if (c === 'D') g.doors.push(i);
+    if (c === 'b') g.bush[i] = 1;
+    if (c === 'H') { g.kind[i] = 1; g.lo[i] = g.hi[i] = 1; continue; }
+    const d = DIRS[c];
+    if (!d) continue;
+    let a = 0, b = 0;
+    while (at(x - d[0] * (a + 1), y - d[1] * (a + 1)) === c) a++;
+    while (at(x + d[0] * (b + 1), y + d[1] * (b + 1)) === c) b++;
+    const L = a + b + 1;
+    g.kind[i] = 2 + '^v<>'.indexOf(c); g.lo[i] = a / L; g.hi[i] = (a + 1) / L;
+  }
   return g;
 }
-const isSolid = (g, tx, ty) => tx < 0 || ty < 0 || tx >= g.w || ty >= g.h || g.solid[ty * g.w + tx] === 1;
+export function setDoorSolid(g, idx, open) { g.solid[idx] = open ? 0 : 1; }
+export const inBush = (g, x, y) => g.bush[Math.floor(y) * g.w + Math.floor(x)] > 0;
+export function heightAt(g, x, y) {
+  const tx = Math.floor(x), ty = Math.floor(y);
+  if (tx < 0 || ty < 0 || tx >= g.w || ty >= g.h) return 0;
+  const i = ty * g.w + tx, k = g.kind[i];
+  if (k === 0) return 0;
+  if (k === 1) return 1;
+  const fx = x - tx, fy = y - ty;
+  const t = k === 2 ? 1 - fy : k === 3 ? fy : k === 4 ? 1 - fx : fx;
+  return g.lo[i] + (g.hi[i] - g.lo[i]) * t;
+}
+const isSolid = (g, tx, ty) => tx < 0 || ty < 0 || tx >= g.w || ty >= g.h || g.solid[ty * g.w + tx] > 0;
 export function blocked(g, x, y, r) {
   const x0 = Math.floor(x - r), x1 = Math.floor(x + r), y0 = Math.floor(y - r), y1 = Math.floor(y + r);
   for (let ty = y0; ty <= y1; ty++) {
@@ -34,9 +64,9 @@ export function blocked(g, x, y, r) {
 }
 export function moveCircle(g, e, dx, dy, r) {
   let nx = e.x + dx;
-  if (blocked(g, nx, e.y, r)) nx = e.x;
+  if (blocked(g, nx, e.y, r) || heightAt(g, nx, e.y) - heightAt(g, e.x, e.y) > STEP_MAX) nx = e.x;
   let ny = e.y + dy;
-  if (blocked(g, nx, ny, r)) ny = e.y;
+  if (blocked(g, nx, ny, r) || heightAt(g, nx, ny) - heightAt(g, nx, e.y) > STEP_MAX) ny = e.y;
   e.x = nx; e.y = ny;
 }
 

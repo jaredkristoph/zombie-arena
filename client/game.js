@@ -1,5 +1,5 @@
 // Zombie Arena client: lobby UI, networking, input + prediction, HUD, chat.
-import { $, clamp, lerp, lerpAngle, makeGrid, moveCircle, PLAYER_R, PLAYER_SPEED, STAM_MAX, DASH_TIME, DASH_MULT, KILL_BOOST, DASH_CD, sfx, unlockAudio, toggleMute, setVolume, setMuted } from './util.js';
+import { $, clamp, lerp, lerpAngle, makeGrid, setDoorSolid, inBush, blocked, moveCircle, PLAYER_R, PLAYER_SPEED, STAM_MAX, DASH_TIME, DASH_MULT, KILL_BOOST, DASH_CD, sfx, unlockAudio, toggleMute, setVolume, setMuted } from './util.js';
 import * as W3 from './world.js';
 
 const INTERP_MS = 90;
@@ -62,7 +62,7 @@ setInterval(() => { if (S.connected) send({ t: 'ping', ts: performance.now() });
 function handle(m) {
   switch (m.t) {
     case 'hello_ok':
-      S.serverDash = !!m.dash; document.body.classList.toggle('old-server', !m.dash);
+      S.serverDash = !!m.dash; S.serverBuild = m.build || 'old'; document.body.classList.toggle('old-server', !m.dash);
       document.body.classList.remove('conn-lost');
       try { if (m.token) sessionStorage.setItem('za-token', m.token); } catch (e) { /* ignore */ }
       if (S.inGame && !m.resumed) { leaveGameView(); S.room = null; setScreen('menu'); toast('The game you were in has ended'); } // too late to rejoin
@@ -77,11 +77,15 @@ function handle(m) {
     case 'chat': addChat(m); break;
     case 'toast': toast(m.text); break;
     case 'err': toast(m.msg); break;
-    case 'dd': if (m.id !== S.id) { // scripted dash: simulate it locally from the start point, same speed and walls as the server
-      W3.startRoll(m.id); S.dashSim.set(m.id, { x: m.x, y: m.y, dx: m.dx, dy: m.dy, left: DASH_TIME, mul: DASH_MULT * (m.b ? KILL_BOOST : 1) }); S.dashFade.delete(m.id);
+    case 'dd': S.ddCount = (S.ddCount || 0) + 1; readout(); if (m.id !== S.id) { // scripted dash: simulate it locally from the start point, same speed and walls as the server
+      W3.startRoll(m.id);
+      if (![m.x, m.y, m.dx, m.dy].every(Number.isFinite)) break; // (an older server only sends the id: the roll alone is still shown)
+      S.dashSim.set(m.id, { x: m.x, y: m.y, dx: m.dx, dy: m.dy, left: DASH_TIME, mul: DASH_MULT * (m.b ? KILL_BOOST : 1) }); S.dashFade.delete(m.id);
       W3.burst(m.x, m.y, 0.1, '#cccccc', 6, 2.5, 0.12, 0.35); sfx('dash', distVol(m.x, m.y) * 0.5);
     } break;
-    case 'pong': S.ping = Math.round(performance.now() - m.ts); $('ping').textContent = S.ping + ' ms · ' + BUILD; break;
+    case 'hs': headshotFlash(); break;
+    case 'dx': S.dxCount = (S.dxCount || 0) + 1; S.dxWhy = m.why; readout(); break;
+    case 'pong': S.ping = Math.round(performance.now() - m.ts); break;
     default:
   }
 }
@@ -303,11 +307,13 @@ function startGame(m) {
   S.mouse.down = false; S.sentAim = 1e9; // force the first input to carry our aim
   document.body.classList.toggle('mode-pvp', S.mode === 'pvp');
   S.grid = makeGrid(m.map);
+  for (const i of m.doors || []) setDoorSolid(S.grid, i, true);
   S.snaps = []; S.latest = null; S.pending = []; S.groundList = []; S.graves = []; S.me.init = false; S.me.dead = false; S.seq = 0; S.spec = 0;
   S.acc = { dx: 0, dy: 0, dt: 0, sh: 0, dh: 0, sp: 0 }; S.lastKey = '0,0,0,0'; S.stam = STAM_MAX; S.exh = false; S.dashT = 0; S.noRec = 0; S.dashSeq = 0; S.dashSim.clear(); S.dashFade.clear(); S.lastIdle = true; S.lastHp = 100;
   if (!S.three) { W3.init($('c')); S.three = true; }
   W3.clearAll();
   W3.buildMap(m.map);
+  for (const i of m.doors || []) W3.setDoor(i, true);
   clearLabels();
   setScreen('game');
   unlockAudio();
@@ -347,12 +353,13 @@ function onOver(m) {
 // ---------- snapshots ----------
 function onSnapshot(m) {
   if (!S.inGame) return;
-  const snap = { t: performance.now(), p: new Map(m.p.map((a) => [a[0], a])), z: new Map(m.z.map((a) => [a[0], a])) };
+  const snap = { t: performance.now(), p: new Map(m.p.filter((a) => a[19] !== 1).map((a) => [a[0], a])), hud: m.p, z: new Map(m.z.map((a) => [a[0], a])) };
   S.snaps.push(snap);
   if (S.snaps.length > 8) S.snaps.shift();
   S.latest = snap;
   if (m.g) { S.groundList = m.g; W3.setGround(m.g, S.items); }
   S.graves = m.gr;
+  W3.setGrenades(m.gn || []);
   W3.setGraves(m.gr, S.revive, S.graveR);
   S.wave = m.w;
   const sp = snap.p.get(S.id);
@@ -361,7 +368,7 @@ function onSnapshot(m) {
     if (sp[4] < S.lastHp && !me.dead) { $('hurt').style.opacity = 1; setTimeout(() => { $('hurt').style.opacity = 0; }, 120); W3.shake(0.35); }
     S.lastHp = sp[4];
     me.hp = sp[4]; me.weapon = sp[5]; me.dead = !!sp[6]; me.bag = sp[7]; me.kills = sp[8]; me.rs = sp[9] || 0;
-    me.armor = sp[15] || 0;
+    me.armor = sp[15] || 0; me.nades = sp[18] || 0;
     if (sp[17] === 1 && !S.boost && !me.dead) toast('Kill! +20% speed for 10s');
     S.boost = sp[17] === 1;
     if (sp[13] !== undefined) { if (sp[13] < S.stam - 12 || me.dead) S.stam = sp[13]; if (me.dead) { S.stam = STAM_MAX; S.dashT = 0; } } me.ammo = sp[12] === undefined ? 0 : sp[12];
@@ -381,6 +388,15 @@ function onSnapshot(m) {
   if (m.w.tm !== undefined && S.lastPhase !== m.w.ph) { S.lastPhase = m.w.ph; if (m.w.ph) sfx('wave'); }
   for (const ev of m.ev) fx(ev);
 }
+// big "HEADSHOT!" in the middle of the screen for a moment
+let hsTimer = 0;
+function headshotFlash() {
+  const el = $('headshot');
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+  clearTimeout(hsTimer); hsTimer = setTimeout(() => el.classList.remove('show'), 1100);
+  sfx('hit', 1);
+  W3.shake(0.25);
+}
 function distVol(x, y) {
   const d = Math.hypot(x - S.me.x, y - S.me.y);
   return clamp(1 - d / 22, 0, 1);
@@ -396,7 +412,7 @@ function fx(ev) {
       const far = len > 1.02; // (a point-blank hit ends right at the muzzle)
       W3.tracer(tx, ty, far ? x + dx * len : tx + dx * 0.06, far ? y + dy * len : ty + dy * 0.06, col);
       W3.burst(tx + dx * 0.05, ty + dy * 0.05, 0.86, '#ffe27a', 4, 2.5, 0.18, 0.12);
-      if (hit) W3.burst(x + dx * len, y + dy * len, 0.8, '#7bd24a', 4, 3.2, 0.14, 0.4);
+      if (hit) W3.burst(x + dx * len, y + dy * len, 0.8, ev[7] ? '#ffd23f' : '#7bd24a', ev[7] ? 9 : 4, 3.2, ev[7] ? 0.2 : 0.14, 0.4);
       const now = performance.now();
       if (now - S.shootSfxT > 35) { S.shootSfxT = now; sfx('shoot', distVol(x, y) * 0.8); }
       if (hit) sfx('hit', distVol(x + dx * len, y + dy * len) * 0.7);
@@ -404,6 +420,13 @@ function fx(ev) {
     }
     case 'k': W3.addBlood(ev[1], ev[2], ev[3] === 2 ? 1.7 : 1, ev[3] === 2 ? 9 : 6); W3.burst(ev[1], ev[2], 0.7, '#6bbf3a', ev[3] === 2 ? 26 : 12, 5, ev[3] === 2 ? 0.28 : 0.18, 0.7); W3.burst(ev[1], ev[2], 0.6, '#c0392b', 5, 4, 0.14, 0.6); sfx('kill', distVol(ev[1], ev[2])); break;
     case 'h': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.9, '#ff3b5c', 8, 3.5, 0.15, 0.45); sfx('hurt', ev[1] === S.id ? 1 : distVol(v ? v[1] : 99, v ? v[2] : 99) * 0.6); break; }
+    case 'o': { // a door opened / closed (ev[1] = 1 open, ev[2] = tile indexes)
+      for (const i of ev[2]) { setDoorSolid(S.grid, i, !!ev[1]); W3.setDoor(i, !!ev[1]); }
+      const i0 = ev[2][0]; sfx('pick', distVol((i0 % S.grid.w) + 0.5, Math.floor(i0 / S.grid.w) + 0.5) * 0.7);
+      break;
+    }
+    case 'g': W3.blast(ev[1], ev[2], ev[3]); sfx('kill', distVol(ev[1], ev[2])); sfx('shoot', distVol(ev[1], ev[2]) * 0.9); break;
+    case 't': sfx('dash', ev[1] === S.id ? 0.7 : 0.3); break;
     case 'D': if (ev[1] !== S.id) W3.startRoll(ev[1]); break; // (the 'dd' message normally got there first)
     case 'd': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.addBlood(v[1], v[2], 1.6, 9); if (v) W3.burst(v[1], v[2], 0.8, '#ff3b5c', 22, 5, 0.2, 0.8); sfx('death', ev[1] === S.id ? 1 : 0.5); if (ev[1] === S.id) W3.shake(0.8); break; }
     case 'r': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.3, '#9be564', 30, 4, 0.18, 1.0); sfx('revive', ev[1] === S.id ? 1 : 0.6); break; }
@@ -446,6 +469,7 @@ window.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   switch (e.code) {
     case 'KeyE': send({ t: 'act', k: 'equip' }); break;
+    case 'KeyF': send({ t: 'act', k: 'nade' }); break;
     case 'KeyQ': send({ t: 'act', k: 'drop' }); break;
     case 'KeyG': send({ t: 'act', k: 'dropheal' }); break;
     case 'KeyH': send({ t: 'act', k: 'heal' }); break;
@@ -525,7 +549,8 @@ function inputStep(dt) {
   const shiftDown = !typing && !me.dead && !!(keys.ShiftLeft || keys.ShiftRight);
   let startDash = false;
   if (shiftDown && !S.dashKey && S.serverDash && S.dashT <= 0 && S.stam >= STAM_MAX - 1) {
-    startDash = true; S.dashT = DASH_TIME; S.stam = 0;
+    startDash = true; S.dashT = DASH_TIME; S.stam = 0; S.dashSent = (S.dashSent || 0) + 1; readout();
+    send({ t: 'dash', dx: len > 0 ? dx : Math.cos(me.a), dy: len > 0 ? dy : Math.sin(me.a) }); // like a chat message: goes straight out, relayed to everyone
     S.ddx = len > 0 ? dx : Math.cos(me.a); S.ddy = len > 0 ? dy : Math.sin(me.a);
     sfx('dash');
   }
@@ -594,11 +619,14 @@ function placeLabel(l, x, y, h) {
 const hudCache = {};
 function setText(id, v) { if (hudCache[id] !== v) { hudCache[id] = v; $(id).textContent = v; } }
 
+function readout() { setText('ping', `${S.ping || 0} ms · ${S.fps || 0} fps · page ${BUILD} · server ${S.serverBuild || '?'} · my dashes ${S.dashSent || 0} · dash msgs from server ${S.ddCount || 0}${S.dxCount ? ' · server refused ' + S.dxCount + 'x (' + S.dxWhy + ')' : ''}`); }
 function frame(now) {
   if (!S.loop) return;
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - S.last) / 1000);
   S.last = now;
+  S.fc = (S.fc || 0) + 1; if (!S.fT) S.fT = now;
+  if (now - S.fT >= 500) { S.fps = Math.round((S.fc * 1000) / (now - S.fT)); S.fc = 0; S.fT = now; readout(); }
   if (!S.latest) { return; }
   const me = S.me;
   const moving = inputStep(dt);
@@ -678,8 +706,14 @@ function frame(now) {
   if (!me.dead && !prompt) {
     let best = null, bd = S.pickR * S.pickR;
     for (const g of S.groundList) { if (S.items[g[3]] && S.items[g[3]].type === 'ammo') continue; const d = (g[1] - me.vx) ** 2 + (g[2] - me.vy) ** 2; if (d < bd) { bd = d; best = g; } }
-    if (best) { const def = S.items[best[3]]; if (def && def.type !== 'ammo') prompt = `[E] ${def.type === 'heal' ? 'Pick up' : def.type === 'armor' ? 'Wear' : 'Equip'} ${def.name}`; }
+    if (best) { const def = S.items[best[3]]; if (def && def.type !== 'ammo') prompt = `[E] ${def.type === 'heal' || def.type === 'grenade' ? 'Pick up' : def.type === 'armor' ? 'Wear' : 'Equip'} ${def.name}`; }
   }
+  if (!me.dead && !prompt && S.grid.doors.length) { // a door nearby
+    let bi = -1, bd2 = 1.9 * 1.9;
+    for (const i of S.grid.doors) { const d = ((i % S.grid.w) + 0.5 - me.vx) ** 2 + (Math.floor(i / S.grid.w) + 0.5 - me.vy) ** 2; if (d < bd2) { bd2 = d; bi = i; } }
+    if (bi >= 0) prompt = `[E] ${S.grid.solid[bi] ? 'Open' : 'Close'} door`;
+  }
+  $('hidden-tag').style.display = !me.dead && S.mode === 'pvp' && inBush(S.grid, me.vx, me.vy) ? 'block' : 'none';
   const pr = $('prompt');
   if (prompt) { pr.style.display = 'block'; setText('prompt', prompt); } else pr.style.display = 'none';
 
@@ -710,7 +744,7 @@ function updateHud(me, myGrave) {
   if (S.mode === 'pvp') {
     if (S.teams) {
       const sc = [0, 0];
-      for (const p of S.latest.p.values()) { const r = S.roster.find((q) => q.id === p[0]); if (r && r.team >= 0) sc[r.team] += p[8]; }
+      for (const p of S.latest.hud) { const r = S.roster.find((q) => q.id === p[0]); if (r && r.team >= 0) sc[r.team] += p[8]; }
       setText('wave-title', `RED ${sc[0]}  -  ${sc[1]} BLUE`);
       setText('wave-sub', S.killLimit ? `Team deathmatch - first to ${S.killLimit} kills` : 'Team deathmatch - endless');
     } else {
@@ -731,10 +765,10 @@ function updateHud(me, myGrave) {
   const melee = !!(def && def.melee);
   setText('ammo-info', melee ? 'Melee - no ammo needed' : `Ammo ${me.ammo | 0}`);
   $('ammo-info').classList.toggle('low', !melee && (me.ammo | 0) <= 15);
-  setText('bag-info', me.bag ? `Heals x${me.bag}  [H]` : '');
+  setText('bag-info', (me.bag ? `Heals x${me.bag}  [H]` : '') + (me.nades ? `${me.bag ? '  ' : ''}Grenades x${me.nades}  [F]` : ''));
   // players list
   let html = '';
-  const plist = [...S.latest.p.values()];
+  const plist = [...S.latest.hud];
   if (S.mode === 'pvp') plist.sort((a, b) => b[8] - a[8] || (a[11] || 0) - (b[11] || 0));
   for (const p of plist) {
     const info = S.roster.find((r) => r.id === p[0]);
@@ -755,10 +789,10 @@ function updateHud(me, myGrave) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 
-const BUILD = 'b16'; // shown in the corner so you can check every window runs the same version
+const BUILD = 'b25'; // shown in the corner so you can check every window runs the same version
 // ---------- settings (gear button, top right; on the menu, in the room lobby and in game) ----------
 S.dashSim = new Map(); S.dashFade = new Map();
-globalThis.__za = S; S.W3 = W3; // (debug / tests)
+globalThis.__za = S; S.W3 = W3; S.blockedAt = (x, y) => blocked(S.grid, x, y, PLAYER_R); // (debug / tests)
 S.set = { pan: 40, vol: 80, mute: false };
 try { Object.assign(S.set, JSON.parse(localStorage.getItem('za-settings2') || '{}')); } catch (e) { /* ignore */ }
 function saveSettings() { try { localStorage.setItem('za-settings2', JSON.stringify(S.set)); } catch (e) { /* ignore */ } }

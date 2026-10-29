@@ -51,7 +51,7 @@
 
   // ---------- map editor ----------
   const TOOLS = [
-    ['.', 'Floor / erase'], ['#', 'Wall'], ['c', 'Crate'], ['P', 'Player spawn'], ['Z', 'Zombie spawn'], ['I', 'Item spawn'],
+    ['.', 'Floor / erase'], ['#', 'Wall'], ['c', 'Crate'], ['H', 'High ground'], ['D', 'Door'], ['b', 'Bush'], ['w', 'Water'], ['s', 'Sand'], ['^', 'Ramp up (north)'], ['v', 'Ramp up (south)'], ['<', 'Ramp up (west)'], ['>', 'Ramp up (east)'], ['P', 'Player spawn'], ['Z', 'Zombie spawn'], ['I', 'Item spawn'],
   ];
   const tb = $('tools');
   TOOLS.forEach(([k, label]) => {
@@ -102,8 +102,9 @@
     cv.width = cur.w * CELL; cv.height = cur.h * CELL;
     for (let y = 0; y < cur.h; y++) for (let x = 0; x < cur.w; x++) {
       const c = cur.tiles[y][x];
-      ctx.fillStyle = c === '#' ? '#8b7aa8' : c === 'c' ? '#b9854a' : (x + y) % 2 ? '#52704a' : '#4b6643';
+      ctx.fillStyle = c === '#' ? '#8b7aa8' : c === 'c' ? '#b9854a' : c === 'H' ? '#9fb17a' : c === 'D' ? '#8a5a2b' : c === 'b' ? '#2f8f3a' : c === 'w' ? '#3a86c8' : c === 's' ? '#d8c488' : '^v<>'.includes(c) ? '#b89c62' : (x + y) % 2 ? '#52704a' : '#4b6643';
       ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+      if ('^v<>'.includes(c)) { ctx.fillStyle = '#4a3a18'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText({ '^': '\u25b2', v: '\u25bc', '<': '\u25c0', '>': '\u25b6' }[c], x * CELL + CELL / 2, y * CELL + CELL / 2); }
       if (c === 'c') { ctx.fillStyle = '#e0aa6a'; ctx.fillRect(x * CELL + 3, y * CELL + 3, CELL - 6, CELL - 6); }
     }
     const dot = (p, col, ch) => {
@@ -125,10 +126,10 @@
       cur.zombieSpawns = cur.zombieSpawns.filter((p) => !same(p));
       cur.itemSpawns = cur.itemSpawns.filter((p) => !same(p));
     };
-    if (tool === '#' || tool === 'c') { clearPoint(); cur.tiles[y][x] = tool; }
+    if ('#cH^v<>Dbws'.includes(tool) && tool.length === 1) { clearPoint(); cur.tiles[y][x] = tool; }
     else if (tool === '.') { clearPoint(); cur.tiles[y][x] = '.'; }
     else {
-      if (cur.tiles[y][x] !== '.') cur.tiles[y][x] = '.';
+      if (!'.Hs'.includes(cur.tiles[y][x])) cur.tiles[y][x] = '.';
       clearPoint();
       if (tool === 'P') cur.playerSpawns.push({ x, y });
       else if (tool === 'Z') cur.zombieSpawns.push({ x, y });
@@ -164,9 +165,9 @@
   // ---------- items ----------
   function syncType() {
     const ty = $('i-type').value;
-    document.querySelectorAll('.w').forEach((e) => { e.style.display = ty === 'weapon' ? 'block' : 'none'; });
+    document.querySelectorAll('.w').forEach((e) => { e.style.display = ty === 'weapon' || ty === 'grenade' ? 'block' : 'none'; });
     document.querySelectorAll('.h').forEach((e) => { e.style.display = ty === 'heal' ? 'block' : 'none'; });
-    document.querySelectorAll('.a').forEach((e) => { e.style.display = (ty === 'ammo' || ty === 'armor') ? 'block' : 'none'; });
+    document.querySelectorAll('.a').forEach((e) => { e.style.display = (ty === 'ammo' || ty === 'armor' || ty === 'grenade') ? 'block' : 'none'; });
   }
   $('i-type').onchange = syncType;
   let editId = null;
@@ -177,7 +178,7 @@
       const n = document.createElement('td'); const d = document.createElement('span'); d.className = 'dot'; d.style.background = i.color;
       n.append(d, document.createTextNode(i.name));
       const s = document.createElement('td');
-      s.textContent = i.type === 'heal' ? 'Heals ' + i.heal : i.type === 'armor' ? 'Armor +' + i.amount : i.type === 'ammo' ? '+' + i.amount + ' bullets (shared by all guns)' : `${i.melee ? 'Melee ' : ''}${i.damage} dmg x${i.pellets} · ${i.rate}/s · range ${i.range}` + (i.pierce ? ' · pierce ' + i.pierce : '');
+      s.textContent = i.type === 'heal' ? 'Heals ' + i.heal : i.type === 'armor' ? 'Armor +' + i.amount : i.type === 'grenade' ? `Grenade ${i.damage} dmg, radius ${i.radius}, +${i.amount} per pickup` : i.type === 'ammo' ? '+' + i.amount + ' bullets (shared by all guns)' : `${i.melee ? 'Melee ' : ''}${i.damage} dmg x${i.pellets} · ${i.rate}/s · range ${i.range}` + (i.pierce ? ' · pierce ' + i.pierce : '');
       const a = document.createElement('td'); a.style.textAlign = 'right';
       const e = document.createElement('button'); e.textContent = 'Edit'; e.className = 'ghost'; e.style.padding = '4px 10px';
       e.onclick = () => editItem(i);
@@ -194,6 +195,7 @@
     editId = i.id; $('if-title').textContent = 'Edit item: ' + i.name;
     $('i-name').value = i.name; $('i-type').value = i.type; $('i-color').value = i.color;
     for (const k of ['damage', 'rate', 'range', 'pellets', 'spread', 'pierce', 'heal', 'amount']) if (i[k] !== undefined) $('i-' + k).value = i[k];
+    if (i.type === 'grenade') $('i-range').value = i.radius;
     $('i-melee').checked = !!i.melee;
     syncType();
   }
@@ -203,6 +205,7 @@
     const body = { id: editId || undefined, name: $('i-name').value, type: $('i-type').value, color: $('i-color').value };
     if (heal) body.heal = Number($('i-heal').value);
     else if (ty === 'ammo' || ty === 'armor') body.amount = Number($('i-amount').value);
+    else if (ty === 'grenade') { body.damage = Number($('i-damage').value); body.radius = Number($('i-range').value); body.amount = Number($('i-amount').value); }
     else { for (const k of ['damage', 'rate', 'range', 'pellets', 'spread', 'pierce']) body[k] = Number($('i-' + k).value); body.melee = $('i-melee').checked; if (body.melee) body.arc = 1.8; }
     try { await api('PUT', '/api/admin/items', body, true); await reload(); $('i-clear').onclick(); say('i-msg', 'Item saved. It can now drop from zombies and appear on item spawns.', true); } catch (e) { say('i-msg', e.message); }
   };

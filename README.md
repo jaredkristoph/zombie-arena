@@ -59,6 +59,23 @@ Bullets are **limited and shared by every gun**: you start with 90 (max 240) and
 - **Armor** items (Light Vest +40, Heavy Armor +80, max 100) lie around the map and drop from kills. Press E to wear one. While you have armor it soaks 60% of every hit (the blue bar above your health) until it is used up. You lose it when you die. Admins can make more (Items > Type: Armor).
 - All weapon damage is scaled to 70% (`DMG_SCALE` at the top of `server/game.js`) so fights last longer.
 
+## High ground, ramps and headshots
+
+Dead Town has four raised platforms (north, south, west, east) with 3-tile ramps. You can't climb a platform edge, but you can walk (or get pushed) off one and fall to the ground below. Map editor tiles: **High ground**, and ramps that climb north / south / west / east (a run of the same ramp tile is one slope).
+
+Guns have a rare **headshot**: 5% of the shots that kill. A big **HEADSHOT!** flashes in the middle of your screen for about a second and the hit sparks gold. Swords have no headshots.
+
+## Doors, bushes, water, grenades and auto pick-up
+
+Dead Town is now an asymmetric, dust-style map: T spawn bottom, CT spawn top, an A-site plateau (north-east) reached by ramps, a long sand lane down the east side, a mid corridor with double doors, and a B site (south-west) with a pond, bushes, a ledge and tunnels. Everything below is on it.
+
+- **Doors (`D`)**: press **E** near a door to open or close it (a double door moves together). Closed doors block walking and shooting; you can't close one while someone stands in it. Bots open doors for themselves.
+- **Bushes (`b`)**: in PvP, a player standing in a bush can't be seen by anyone who is not in the same patch of bushes (a separate patch doesn't count; teammates still see you). Hidden players still show in the top-right list with their score. Your screen says HIDDEN IN BUSH when you are.
+- **Water (`w`)** can't be walked through but can be shot over. **Sand (`s`)** is just a floor look.
+- **Grenades**: new item. You start with 1 (max 4). **F** throws one along your aim; it bounces off walls and explodes after about 1.7s (damage fades with distance, walls shield, your own blast hurts you half as much). Grenades lie around the map and can be edited in the admin page (damage, blast radius, amount per pickup).
+- **Auto pick-up**: walking over **armor** better than yours swaps to it, walking over a **heal** when hurt in PvP uses it right away, and ammo and grenades are taken automatically. **E** still picks up weapons and puts heals in your bag.
+- The map editor has tiles for all of these.
+
 ## Your character
 
 The home screen and room lobby show your character on a turntable. Change the **head accessory** (25 hats: cap, cowboy hat, crown, bunny ears, halo, viking helmet, chef hat, jester, unicorn, pumpkin...) with the left/right buttons or the **left/right arrow keys**, and the **outfit** (10 styles: hoodie, red jacket, camo, striped tee, punk, lab coat, knight, overalls, ninja, or your team colour) with the outfit buttons or the **up/down arrow keys**. **Randomize look** picks both at random. Your team colour shows as a ring under your feet. It is remembered in your browser and other players see it in game. Bots get a random one.

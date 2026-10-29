@@ -14,6 +14,7 @@ const DEFAULT_ITEMS = [
   { id: 'greatsword', name: 'Greatsword', type: 'weapon', melee: true, builtin: true, damage: 90, rate: 1.1, range: 2.9, arc: 2.3, pellets: 1, spread: 0, pierce: 0, color: '#f4a261' },
   { id: 'vest', name: 'Light Vest', type: 'armor', builtin: true, amount: 40, color: '#4cc9f0' },
   { id: 'plate', name: 'Heavy Armor', type: 'armor', builtin: true, amount: 80, color: '#9d4edd' },
+  { id: 'grenade', name: 'Grenade', type: 'grenade', builtin: true, damage: 85, radius: 3.4, amount: 1, color: '#7cb518' },
   { id: 'ammo', name: 'Ammo Pack', type: 'ammo', builtin: true, amount: 40, color: '#ffd23f' },
 ];
 
@@ -49,21 +50,68 @@ function scatterCrates(g, rng, count, avoid) {
   }
 }
 
+// Dead Town: an asymmetric "dust"-style map. T spawn bottom-left, CT spawn top, A site on a plateau (north-east) reached by ramps,
+// long lane down the east side, mid with double doors, B site in the south-west with bushes, a pond and tunnels.
 function buildDeadTown() {
-  const w = 40, h = 40, g = makeGrid(w, h);
+  const w = 48, h = 48, g = makeGrid(w, h);
   frame(g, 0, 0, w - 1, h - 1);
-  frame(g, 6, 6, 15, 13); fill(g, 10, 13, 11, 13, '.'); fill(g, 15, 9, 15, 10, '.');
-  frame(g, 24, 6, 33, 13); fill(g, 28, 13, 29, 13, '.'); fill(g, 24, 9, 24, 10, '.');
-  frame(g, 6, 26, 15, 33); fill(g, 10, 26, 11, 26, '.'); fill(g, 15, 29, 15, 30, '.');
-  frame(g, 24, 26, 33, 33); fill(g, 28, 26, 29, 26, '.'); fill(g, 24, 29, 24, 30, '.');
-  fill(g, 17, 17, 17, 17, '#'); fill(g, 22, 17, 22, 17, '#'); fill(g, 17, 22, 17, 22, '#'); fill(g, 22, 22, 22, 22, '#');
-  const playerSpawns = [pt(19, 19), pt(20, 19), pt(19, 20), pt(20, 20), pt(18, 19), pt(21, 20), pt(18, 20), pt(21, 19)];
-  const zombieSpawns = [pt(2, 2), pt(37, 2), pt(2, 37), pt(37, 37), pt(19, 2), pt(20, 37), pt(2, 20), pt(37, 20)];
-  scatterCrates(g, mulberry32(7), 26, playerSpawns.concat(zombieSpawns));
+  // --- CT spawn (top middle): a room with three exits
+  frame(g, 15, 2, 28, 9); fill(g, 21, 9, 23, 9, '.'); fill(g, 15, 5, 15, 6, '.'); fill(g, 28, 5, 28, 6, '.');
+  fill(g, 18, 4, 19, 4, 'c'); fill(g, 24, 7, 24, 7, 'c');
+  // --- A site: plateau (north-east) with two ramps (west and south), grass behind it
+  fill(g, 35, 3, 44, 10, 'H');
+  fill(g, 32, 6, 34, 7, '>');            // ramp from the CT side
+  fill(g, 39, 11, 40, 13, '^');          // ramp from the south ("catwalk" side)
+  fill(g, 45, 3, 46, 10, 'b');           // bush strip behind the plateau
+  fill(g, 31, 3, 31, 5, '#'); fill(g, 31, 8, 31, 9, '#'); // little walls around the west ramp
+  fill(g, 36, 12, 37, 12, 'c'); fill(g, 42, 12, 43, 13, 'c');
+  // --- hall from CT spawn east side to the catwalk and A-long
+  fill(g, 29, 11, 29, 20, '#'); fill(g, 30, 14, 41, 14, '#'); fill(g, 30, 11, 33, 11, '#');
+  fill(g, 34, 14, 41, 14, '.'); // (opening onto the ramp plaza)
+  fill(g, 35, 15, 36, 16, 'c');
+  // --- long A: a lane down the east side, sand floor, doors half way
+  fill(g, 40, 17, 40, 31, '#'); fill(g, 40, 24, 40, 25, 'D');
+  fill(g, 41, 15, 46, 36, 's');
+  fill(g, 43, 20, 44, 21, 'c'); fill(g, 42, 30, 42, 30, 'c'); fill(g, 45, 27, 46, 28, 'w');
+  fill(g, 41, 15, 46, 16, '.'); fill(g, 41, 35, 46, 36, '.');
+  // --- mid: a corridor with doors at the T end and a window-door to B
+  fill(g, 20, 12, 20, 32, '#'); fill(g, 27, 12, 27, 32, '#');
+  fill(g, 20, 16, 20, 17, '.'); fill(g, 27, 18, 27, 19, '.'); // gaps: toward B, toward the hall
+  fill(g, 21, 33, 26, 33, '#'); fill(g, 23, 33, 24, 33, 'D');
+  fill(g, 22, 24, 25, 25, 'c');
+  // --- B site (south-west): sand, pond, bushes, a ledge with a ramp
+  fill(g, 2, 12, 17, 27, 's');
+  fill(g, 16, 12, 16, 27, '#'); fill(g, 16, 18, 16, 19, 'D'); fill(g, 16, 22, 16, 23, '.');
+  fill(g, 17, 12, 19, 27, '.');
+  fill(g, 2, 12, 15, 12, '#'); // north wall of B
+  fill(g, 3, 14, 7, 18, 'H'); fill(g, 8, 15, 10, 16, '<');
+  fill(g, 10, 22, 13, 25, 'b'); fill(g, 3, 22, 4, 24, 'b');
+  fill(g, 7, 21, 9, 23, 'w'); fill(g, 14, 15, 15, 16, 'c'); fill(g, 12, 19, 12, 19, 'c');
+  // --- B tunnels (west): walls with a long corridor from T spawn up into B
+  fill(g, 2, 28, 2, 42, '#'); fill(g, 9, 28, 9, 38, '#'); fill(g, 3, 28, 3, 28, '#'); fill(g, 8, 28, 8, 28, '#');
+  fill(g, 3, 28, 8, 28, '#'); fill(g, 5, 28, 6, 28, '.');
+  fill(g, 4, 31, 5, 31, 'c'); fill(g, 6, 35, 7, 35, 'c');
+  fill(g, 3, 36, 4, 37, 'b');
+  // --- T spawn (bottom): wide yard with cover
+  fill(g, 10, 39, 10, 45, '#'); fill(g, 10, 39, 18, 39, '#'); fill(g, 13, 39, 14, 39, '.');
+  fill(g, 28, 40, 28, 45, '#'); fill(g, 28, 40, 37, 40, '#'); fill(g, 32, 40, 33, 40, '.');
+  fill(g, 14, 42, 15, 43, 'c'); fill(g, 22, 36, 23, 37, 'c'); fill(g, 25, 42, 26, 42, 'c');
+  fill(g, 30, 44, 31, 44, 'c'); fill(g, 34, 44, 35, 45, 'b');
+  // --- scattered cover
+  fill(g, 12, 31, 13, 32, '#'); fill(g, 16, 30, 16, 33, '#'); fill(g, 31, 28, 33, 29, '#'); fill(g, 36, 22, 36, 24, '#');
+  fill(g, 32, 33, 34, 34, 'c'); fill(g, 12, 7, 13, 9, '#'); fill(g, 5, 4, 8, 5, 'c'); fill(g, 3, 8, 3, 9, 'b');
+  const playerSpawns = [
+    pt(12, 42), pt(13, 43), pt(14, 41), pt(16, 44), pt(18, 42), pt(20, 43), pt(22, 41), pt(24, 44), // T
+    pt(18, 6), pt(20, 7), pt(23, 6), pt(25, 5), pt(26, 7), pt(22, 3), // CT
+  ];
+  const zombieSpawns = [pt(2, 2), pt(45, 44), pt(11, 3), pt(33, 3), pt(3, 40), pt(44, 40), pt(45, 12), pt(31, 18)].filter((q, i) => i < 8);
+  scatterCrates(g, mulberry32(11), 6, playerSpawns.concat(zombieSpawns));
   const itemSpawns = [
-    pt(9, 8, 'shotgun'), pt(30, 9, 'smg'), pt(9, 30, 'medkit'), pt(30, 30, 'rifle'),
-    pt(12, 10, 'random'), pt(26, 11, 'random'), pt(8, 29, 'random'), pt(31, 29, 'random'),
-    pt(19, 15, 'random'), pt(20, 24, 'random'), pt(15, 20, 'random'), pt(24, 19, 'random'),
+    pt(23, 5, 'rifle'), pt(18, 8, 'medkit'), pt(40, 5, 'sniper'), pt(38, 8, 'plate'),
+    pt(5, 16, 'plate'), pt(11, 14, 'grenade'), pt(5, 33, 'shotgun'), pt(7, 40, 'random'),
+    pt(24, 20, 'grenade'), pt(23, 28, 'smg'), pt(25, 14, 'random'), pt(43, 25, 'grenade'),
+    pt(44, 18, 'random'), pt(44, 33, 'medkit'), pt(20, 41, 'vest'), pt(15, 41, 'ammo'),
+    pt(33, 42, 'random'), pt(13, 24, 'random'), pt(36, 18, 'random'), pt(30, 34, 'bandage'),
   ];
   return { id: 'dead-town', name: 'Dead Town', w, h, tiles: g.map((r) => r.join('')), playerSpawns, zombieSpawns, itemSpawns, builtin: true };
 }
@@ -100,9 +148,10 @@ function sanitizeItem(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('Bad item');
   const name = cleanName(raw.name, 20);
   if (!name) throw new Error('Item needs a name');
-  const type = raw.type === 'heal' ? 'heal' : raw.type === 'ammo' ? 'ammo' : raw.type === 'armor' ? 'armor' : 'weapon';
+  const type = raw.type === 'heal' ? 'heal' : raw.type === 'ammo' ? 'ammo' : raw.type === 'armor' ? 'armor' : raw.type === 'grenade' ? 'grenade' : 'weapon';
   const id = validId(raw.id) ? raw.id : (slug(name) || 'item') + '-' + Math.random().toString(36).slice(2, 6);
   const color = /^#[0-9a-f]{6}$/i.test(raw.color || '') ? raw.color : '#ffffff';
+  if (type === 'grenade') return { id, name, type, damage: Math.round(num(raw.damage, 1, 500, 85)), radius: num(raw.radius, 1, 8, 3.4), amount: Math.round(num(raw.amount, 1, 4, 1)), color };
   if (type === 'armor') return { id, name, type, amount: Math.round(num(raw.amount, 1, 100, 40)), color };
   if (type === 'ammo') return { id, name, type, amount: Math.round(num(raw.amount, 1, 240, 40)), color };
   if (type === 'heal') return { id, name, type, heal: Math.round(num(raw.heal, 1, 200, 30)), color };
@@ -126,13 +175,13 @@ function sanitizeMap(raw) {
   if (!Array.isArray(raw.tiles) || raw.tiles.length !== h) throw new Error('Bad tiles');
   const tiles = raw.tiles.map((row) => {
     if (typeof row !== 'string' || row.length !== w) throw new Error('Bad tile row');
-    return row.replace(/[^.#c]/g, '.');
+    return row.replace(/[^.#cH^v<>Dbws]/g, '.');
   });
   for (let y = 0; y < h; y++) {
     if (y === 0 || y === h - 1) tiles[y] = '#'.repeat(w);
     else tiles[y] = '#' + tiles[y].slice(1, w - 1) + '#';
   }
-  const open = (p) => p && Number.isInteger(p.x) && Number.isInteger(p.y) && p.x > 0 && p.y > 0 && p.x < w - 1 && p.y < h - 1 && tiles[p.y][p.x] === '.';
+  const open = (p) => p && Number.isInteger(p.x) && Number.isInteger(p.y) && p.x > 0 && p.y > 0 && p.x < w - 1 && p.y < h - 1 && '.Hs'.includes(tiles[p.y][p.x]);
   const uniq = (arr, max, withItem) => {
     const seen = new Set(), out = [];
     for (const p of Array.isArray(arr) ? arr : []) {

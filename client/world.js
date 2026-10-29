@@ -1,6 +1,18 @@
 // Three.js scene: map, characters, items, graves, effects. Everything is built from one shared box geometry.
 import * as THREE from 'three';
-import { lerpAngle } from './util.js';
+import { lerpAngle, makeGrid, heightAt } from './util.js';
+
+// terrain of the current map (high ground + ramps); everything that stands on the ground is lifted by this
+let tGrid = null;
+// things that step off an edge fall to the ground instead of snapping; going up (ramps) follows the slope
+function settle(v, target, dt) {
+  if (v.hy === undefined || target >= v.hy) { v.hy = target; v.fv = 0; return target; }
+  v.fv = (v.fv || 0) + 22 * dt;
+  v.hy = Math.max(target, v.hy - v.fv * dt);
+  if (v.hy === target) v.fv = 0;
+  return v.hy;
+}
+export const groundH = (x, y) => (tGrid ? heightAt(tGrid, x, y) : 0);
 
 const BOX = new THREE.BoxGeometry(1, 1, 1);
 const RING_GEO = new THREE.RingGeometry(0.42, 0.56, 24).rotateX(-Math.PI / 2);
@@ -27,7 +39,8 @@ function darken(hex, f) {
 let renderer, scene, camera, worldGroup, entGroup, particles, W = 1, H = 1;
 const players = new Map(), zombies = new Map(), groundViews = new Map(), graveViews = new Map();
 const tracers = [], slashes = [];
-const cam = { x: 0, y: 0, shake: 0 };
+const doorViews = new Map(), nadeViews = [], blasts = [];
+const cam = { x: 0, y: 0, h: 0, shake: 0 };
 const P = { n: 260, i: 0, pos: null, vel: null, life: null, max: null, size: null };
 const dummy = new THREE.Object3D();
 const projV = new THREE.Vector3();
@@ -99,10 +112,11 @@ export function buildMap(map) {
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(map.w / 2, 0, map.h / 2);
   worldGroup.add(floor);
-  const walls = [], crates = [];
+  tGrid = makeGrid(map);
+  const walls = [], crates = [], highs = [], ramps = [], sands = [], waters = [], bushes = [], doorTiles = [];
   for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
     const c = map.tiles[y][x];
-    if (c === '#') walls.push([x, y]); else if (c === 'c') crates.push([x, y]);
+    if (c === '#') walls.push([x, y]); else if (c === 'c') crates.push([x, y]); else if (c === 'H') highs.push([x, y]); else if (c === 's') sands.push([x, y]); else if (c === 'w') waters.push([x, y]); else if (c === 'b') bushes.push([x, y]); else if (c === 'D') doorTiles.push([x, y]); else if (tGrid.kind[y * map.w + x] >= 2) ramps.push([x, y]);
   }
   const wallCols = ['#8b7aa8', '#7d6c9a', '#9484b0'];
   const wm = new THREE.InstancedMesh(BOX, new THREE.MeshLambertMaterial({ color: 0xffffff }), Math.max(1, walls.length));
@@ -126,18 +140,111 @@ export function buildMap(map) {
   });
   cm.count = lid.count = crates.length;
   worldGroup.add(cm, lid);
+  const flat = (list, y, sy, colors, extra) => {
+    if (!list.length) return;
+    const m = new THREE.InstancedMesh(BOX, new THREE.MeshLambertMaterial(Object.assign({ color: 0xffffff }, extra || {})), list.length);
+    list.forEach(([x, z], i) => {
+      dummy.position.set(x + 0.5, y, z + 0.5); dummy.scale.set(1.001, sy, 1.001); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
+      m.setMatrixAt(i, dummy.matrix); m.setColorAt(i, new THREE.Color(colors[(x * 5 + z * 3) % colors.length]));
+    });
+    worldGroup.add(m);
+  };
+  flat(sands, 0.012, 0.02, ['#d8c488', '#d1bc7e', '#decb91']);
+  flat(waters, 0.02, 0.05, ['#3a86c8', '#3f8fd0', '#357cbb'], { transparent: true, opacity: 0.88 });
+  if (bushes.length) {
+    const bm = new THREE.InstancedMesh(BOX, new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.84 }), bushes.length);
+    const bt = new THREE.InstancedMesh(BOX, new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.84 }), bushes.length);
+    bushes.forEach(([x, z], i) => {
+      const j = ((x * 13 + z * 7) % 5) * 0.03;
+      dummy.position.set(x + 0.5, 0.45, z + 0.5); dummy.scale.set(0.96, 0.9 + j, 0.96); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
+      bm.setMatrixAt(i, dummy.matrix); bm.setColorAt(i, new THREE.Color((x + z) % 2 ? '#2f8f3a' : '#2a8035'));
+      dummy.position.set(x + 0.5 + (j - 0.06), 1.0 + j, z + 0.5 - (j - 0.06)); dummy.scale.set(0.66, 0.3, 0.66); dummy.rotation.set(0, j * 9, 0); dummy.updateMatrix();
+      bt.setMatrixAt(i, dummy.matrix); bt.setColorAt(i, new THREE.Color('#48b24c'));
+    });
+    worldGroup.add(bm, bt);
+  }
+  doorViews.clear();
+  for (const [x, z] of doorTiles) {
+    const isD = (a, b) => { const c = map.tiles[b] && map.tiles[b][a]; return c === '#' || c === 'D'; };
+    const spanX = isD(x - 1, z) || isD(x + 1, z);
+    const slab = new THREE.Mesh(BOX, mat('#8a5a2b'));
+    const handle = new THREE.Mesh(BOX, mat('#e9c46a'));
+    const root = new THREE.Group();
+    root.add(slab, handle);
+    worldGroup.add(root);
+    doorViews.set(z * map.w + x, { root, slab, handle, x, z, spanX });
+    setDoor(z * map.w + x, false);
+  }
+  if (highs.length) {
+    const pm = new THREE.InstancedMesh(BOX, new THREE.MeshLambertMaterial({ color: 0xffffff }), highs.length);
+    const pc = new THREE.InstancedMesh(BOX, new THREE.MeshLambertMaterial({ color: 0xffffff }), highs.length);
+    highs.forEach(([x, y], i) => {
+      dummy.position.set(x + 0.5, 0.5, y + 0.5); dummy.scale.set(1, 1, 1); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
+      pm.setMatrixAt(i, dummy.matrix); pm.setColorAt(i, new THREE.Color((x + y) % 2 ? '#6f7f5a' : '#76865f'));
+      dummy.position.y = 1.0; dummy.scale.set(1, 0.05, 1); dummy.updateMatrix();
+      pc.setMatrixAt(i, dummy.matrix); pc.setColorAt(i, new THREE.Color((x + y) % 2 ? '#9fb17a' : '#a8ba82'));
+    });
+    worldGroup.add(pm, pc);
+  }
+  if (ramps.length) {
+    const pos = [];
+    const quad = (a, b, c, d) => pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    for (const [x, y] of ramps) {
+      const i = y * map.w + x, k = tGrid.kind[i], lo = tGrid.lo[i], hi = tGrid.hi[i];
+      const hh = (fx, fy) => lo + (hi - lo) * (k === 2 ? 1 - fy : k === 3 ? fy : k === 4 ? 1 - fx : fx);
+      const A = [x, hh(0, 0), y], B = [x + 1, hh(1, 0), y], C = [x + 1, hh(1, 1), y + 1], D = [x, hh(0, 1), y + 1];
+      quad(A, D, C, B);
+      for (const [P, Q] of [[A, D], [B, C], [A, B], [D, C]]) if (P[1] > 0.001 || Q[1] > 0.001) quad(P, [P[0], 0, P[2]], [Q[0], 0, Q[2]], Q);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    const rm = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: '#b89c62', side: THREE.DoubleSide }));
+    worldGroup.add(rm);
+  }
   const ringGeo = new THREE.RingGeometry(0.55, 0.9, 24).rotateX(-Math.PI / 2);
   for (const s of map.zombieSpawns) {
     const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xc0203a, transparent: true, opacity: 0.55 }));
-    m.position.set(s.x + 0.5, 0.03, s.y + 0.5);
+    m.position.set(s.x + 0.5, 0.03 + groundH(s.x + 0.5, s.y + 0.5), s.y + 0.5);
     worldGroup.add(m);
   }
   for (const s of map.playerSpawns) {
     const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0x4cc9f0, transparent: true, opacity: 0.3 }));
-    m.position.set(s.x + 0.5, 0.03, s.y + 0.5);
+    m.position.set(s.x + 0.5, 0.03 + groundH(s.x + 0.5, s.y + 0.5), s.y + 0.5);
     m.scale.set(0.6, 1, 0.6);
     worldGroup.add(m);
   }
+}
+// doors: closed = a slab filling the doorway, open = swung back against the side of the doorway
+export function setDoor(idx, open) {
+  const d = doorViews.get(idx);
+  if (!d) return;
+  const { slab, handle, x, z, spanX } = d;
+  if (!open) {
+    if (spanX) { slab.scale.set(1, 1.55, 0.42); slab.position.set(x + 0.5, 0.78, z + 0.5); handle.scale.set(0.12, 0.12, 0.5); handle.position.set(x + 0.8, 0.8, z + 0.5); }
+    else { slab.scale.set(0.42, 1.55, 1); slab.position.set(x + 0.5, 0.78, z + 0.5); handle.scale.set(0.5, 0.12, 0.12); handle.position.set(x + 0.5, 0.8, z + 0.8); }
+  } else if (spanX) { slab.scale.set(0.14, 1.55, 0.92); slab.position.set(x + 0.07, 0.78, z + 0.5); handle.scale.set(0.2, 0.12, 0.12); handle.position.set(x + 0.2, 0.8, z + 0.85); }
+  else { slab.scale.set(0.92, 1.55, 0.14); slab.position.set(x + 0.5, 0.78, z + 0.07); handle.scale.set(0.12, 0.12, 0.2); handle.position.set(x + 0.85, 0.8, z + 0.2); }
+}
+export function setGrenades(list) {
+  while (nadeViews.length < list.length) {
+    const m = new THREE.Mesh(BOX, mat('#4b6b1f'));
+    m.scale.set(0.26, 0.3, 0.26); entGroup.add(m); nadeViews.push(m);
+  }
+  nadeViews.forEach((m, i) => {
+    const n = list[i];
+    m.visible = !!n;
+    if (n) m.position.set(n[1], 0.35 + groundH(n[1], n[2]), n[2]);
+  });
+}
+export function blast(x, y, R) {
+  const m = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.5, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffa13a, transparent: true, opacity: 0.9, depthWrite: false }));
+  m.position.set(x, 0.1 + groundH(x, y), y);
+  entGroup.add(m);
+  blasts.push({ m, life: 0.4, R });
+  burst(x, y, 0.5, '#ffb347', 36, 7, 0.26, 0.6);
+  burst(x, y, 0.5, '#444444', 14, 4, 0.3, 0.9);
+  cam.shake = Math.max(cam.shake, 0.6);
 }
 function clearMap() {
   if (!worldGroup) return;
@@ -287,7 +394,7 @@ export function createPreview(canvas, color, acc, fit = 0) {
 }
 // turn > 0 eases the visible facing toward `a` (exponential, shortest way round); 0 = use `a` as is
 export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, protectedNow = false, melee = false, rolling = false) {
-  v.root.position.set(x, 0, y);
+  v.root.position.set(x, settle(v, groundH(x, y), dt), y);
   if (turn > 0 && v.ang !== undefined && !v.wasDead) v.ang = lerpAngle(v.ang, a, 1 - Math.exp(-dt * turn));
   else v.ang = a;
   v.wasDead = dead;
@@ -326,7 +433,7 @@ export function slash(x, y, a, range, arc, color) {
   const q = slashes.find((t) => t.life <= 0) || slashes[0];
   q.mesh.geometry.dispose();
   q.mesh.geometry = new THREE.RingGeometry(range * 0.3, range, 20, 1, -arc / 2, arc).rotateX(-Math.PI / 2);
-  q.mesh.position.set(x, 0.9, y);
+  q.mesh.position.set(x, 0.9 + groundH(x, y), y);
   q.mesh.rotation.y = -a;
   q.mesh.material.color.set(color);
   q.mesh.material.opacity = 0.7;
@@ -373,7 +480,7 @@ export function updateZombie(v, x, y, hpPct, dt) {
   const moved = Math.hypot(dx, dy);
   if (moved > 0.003) { v.ang = lerpAngle(v.ang, Math.atan2(dy, dx), Math.min(1, dt * 12)); v.phase += dt * (6 + moved / Math.max(dt, 0.001) * 2.2); }
   v.px = x; v.py = y;
-  v.root.position.set(x, 0, y);
+  v.root.position.set(x, settle(v, groundH(x, y), dt), y);
   v.model.rotation.y = Math.PI / 2 - v.ang;
   v.model.rotation.z = Math.sin(v.phase) * 0.09;
   v.armL.position.y = 0.98 + Math.sin(v.phase) * 0.07; v.armR.position.y = 0.98 - Math.sin(v.phase) * 0.07;
@@ -406,6 +513,8 @@ function itemMesh(def) {
     for (const x of [-0.17, 0, 0.17]) g.add(box(0.1, 0.24, 0.1, color, x, 0.74, 0), box(0.1, 0.07, 0.1, '#c98a2b', x, 0.89, 0));
   } else if (def && def.type === 'armor') {
     g.add(box(0.56, 0.5, 0.3, color, 0, 0.5, 0), box(0.14, 0.2, 0.3, darken(color, 0.7), -0.2, 0.82, 0), box(0.14, 0.2, 0.3, darken(color, 0.7), 0.2, 0.82, 0), box(0.3, 0.1, 0.32, '#ffffff', 0, 0.55, 0));
+  } else if (def && def.type === 'grenade') {
+    g.add(box(0.3, 0.34, 0.3, '#4b6b1f', 0, 0.45, 0), box(0.12, 0.1, 0.12, '#c9c9c9', 0, 0.68, 0), box(0.2, 0.04, 0.04, '#e9c46a', 0.1, 0.74, 0));
   } else if (def && def.melee) {
     g.add(box(0.95, 0.05, 0.13, color, 0.08, 0.5, 0), box(0.07, 0.07, 0.34, '#8d6e3f', -0.36, 0.5, 0), box(0.24, 0.09, 0.1, '#5a3d1f', -0.52, 0.5, 0));
   } else if (def && def.type === 'heal') {
@@ -426,7 +535,7 @@ export function setGround(list, items) {
     glow.position.y = 0.03;
     const body = itemMesh(def);
     root.add(glow, body);
-    root.position.set(x, 0, y);
+    root.position.set(x, groundH(x, y), y);
     entGroup.add(root);
     groundViews.set(id, { root, body, glow, t: Math.random() * 6 });
   }
@@ -453,7 +562,7 @@ export function setGraves(list, reviveSeconds, graveR) {
       const arc = new THREE.Mesh(arcGeo(0, graveR - 0.4, graveR - 0.1), new THREE.MeshBasicMaterial({ color: 0x9be564, side: THREE.DoubleSide, depthWrite: false }));
       arc.position.y = 0.05;
       root.add(outline, arc);
-      root.position.set(x, 0, y);
+      root.position.set(x, groundH(x, y), y);
       entGroup.add(root);
       v = { root, arc, outline, q: -1 };
       graveViews.set(pid, v);
@@ -482,7 +591,7 @@ export function addBlood(x, y, size = 1, n = 6) {
     const m = bloodMeshes[bloodI]; bloodI = (bloodI + 1) % BLOOD_N;
     const a = Math.random() * Math.PI * 2, d = k === 0 ? 0 : Math.random() * 0.6 * size;
     const r = (k === 0 ? 0.42 : 0.1 + Math.random() * 0.2) * size;
-    m.position.x = x + Math.cos(a) * d; m.position.z = y + Math.sin(a) * d;
+    m.position.x = x + Math.cos(a) * d; m.position.z = y + Math.sin(a) * d; m.position.y = 0.015 + groundH(m.position.x, m.position.z);
     m.scale.set(r * (0.8 + Math.random() * 0.6), 1, r * (0.8 + Math.random() * 0.6));
     m.rotation.y = Math.random() * Math.PI;
     m.visible = true;
@@ -490,6 +599,9 @@ export function addBlood(x, y, size = 1, n = 6) {
 }
 
 export function clearEntities() {
+  for (const m of nadeViews) m.visible = false;
+  for (const b of blasts) { entGroup.remove(b.m); b.m.geometry.dispose(); }
+  blasts.length = 0;
   if (bloodMeshes) for (const m of bloodMeshes) m.visible = false;
   for (const m of [players, zombies, groundViews, graveViews]) for (const id of [...m.keys()]) removeView(m, id);
   for (const t of tracers) { t.life = 0; t.mesh.visible = false; }
@@ -505,7 +617,7 @@ export function tracer(x1, y1, x2, y2, color) {
   let t = tracers.find((q) => q.life <= 0) || tracers[0];
   t.life = 0.07;
   t.mesh.visible = true;
-  t.mesh.position.set((x1 + x2) / 2, 0.86, (y1 + y2) / 2);
+  t.mesh.position.set((x1 + x2) / 2, 0.86 + groundH(x1, y1), (y1 + y2) / 2);
   t.mesh.scale.set(len, 0.07, 0.07);
   t.mesh.rotation.set(0, -Math.atan2(dy, dx), 0);
   t.mesh.material.color.set(color);
@@ -516,7 +628,7 @@ export function burst(x, y, z, color, count, speed, size, life) {
   for (let k = 0; k < count; k++) {
     const i = P.i; P.i = (P.i + 1) % P.n;
     const a = Math.random() * Math.PI * 2, s = speed * (0.35 + Math.random() * 0.65);
-    P.pos[i * 3] = x; P.pos[i * 3 + 1] = z; P.pos[i * 3 + 2] = y;
+    P.pos[i * 3] = x; P.pos[i * 3 + 1] = z + groundH(x, y); P.pos[i * 3 + 2] = y;
     P.vel[i * 3] = Math.cos(a) * s; P.vel[i * 3 + 1] = 2 + Math.random() * speed * 0.8; P.vel[i * 3 + 2] = Math.sin(a) * s;
     P.life[i] = P.max[i] = life * (0.6 + Math.random() * 0.6);
     P.size[i] = size * (0.6 + Math.random() * 0.8);
@@ -531,10 +643,11 @@ export function snapCamera(x, y) { cam.x = x; cam.y = y; }
 export function followCamera(x, y, dt) {
   const f = Math.min(1, dt * 9);
   cam.x += (x - cam.x) * f; cam.y += (y - cam.y) * f;
+  cam.h = (cam.h || 0) + (groundH(x, y) - (cam.h || 0)) * Math.min(1, dt * 5);
   const sx = (Math.random() - 0.5) * cam.shake, sz = (Math.random() - 0.5) * cam.shake;
   cam.shake = Math.max(0, cam.shake - dt * 2.4);
-  camera.position.set(cam.x + sx, 15.5, cam.y + 10 + sz);
-  camera.lookAt(cam.x + sx * 0.5, 0, cam.y - 0.5);
+  camera.position.set(cam.x + sx, 15.5 + cam.h, cam.y + 10 + sz);
+  camera.lookAt(cam.x + sx * 0.5, cam.h, cam.y - 0.5);
 }
 // where does the screen point (px, py) hit the world at gun height? -> {x, y} in map tiles, or null
 const rayCast = new THREE.Raycaster(), aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.86), ndcV = new THREE.Vector2(), hitV = new THREE.Vector3();
@@ -543,13 +656,22 @@ export function screenToGround(px, py) {
   camera.updateMatrixWorld();
   ndcV.set((px / W) * 2 - 1, -(py / H) * 2 + 1);
   rayCast.setFromCamera(ndcV, camera);
+  aimPlane.constant = -(0.86 + (cam.h || 0));
   return rayCast.ray.intersectPlane(aimPlane, hitV) ? { x: hitV.x, y: hitV.z } : null;
 }
 export function project(x, y, h) {
-  projV.set(x, h, y).project(camera);
+  projV.set(x, h + groundH(x, y), y).project(camera);
   return { x: (projV.x * 0.5 + 0.5) * W, y: (-projV.y * 0.5 + 0.5) * H, ok: projV.z < 1 && projV.z > -1 };
 }
 export function draw(dt, time) {
+  for (let i = blasts.length - 1; i >= 0; i--) {
+    const b = blasts[i];
+    b.life -= dt;
+    const k = 1 - Math.max(0, b.life) / 0.4;
+    b.m.scale.setScalar(1 + k * b.R * 2.1);
+    b.m.material.opacity = Math.max(0, 0.9 * (1 - k));
+    if (b.life <= 0) { entGroup.remove(b.m); b.m.geometry.dispose(); blasts.splice(i, 1); }
+  }
   for (const t of tracers) {
     if (t.life <= 0) continue;
     t.life -= dt;
@@ -566,7 +688,8 @@ export function draw(dt, time) {
     const b = i * 3;
     P.vel[b + 1] -= 16 * dt;
     P.pos[b] += P.vel[b] * dt; P.pos[b + 1] += P.vel[b + 1] * dt; P.pos[b + 2] += P.vel[b + 2] * dt;
-    if (P.pos[b + 1] < 0.05) { P.pos[b + 1] = 0.05; P.vel[b + 1] = 0; P.vel[b] *= 0.6; P.vel[b + 2] *= 0.6; }
+    const gy = groundH(P.pos[b], P.pos[b + 2]) + 0.05;
+    if (P.pos[b + 1] < gy) { P.pos[b + 1] = gy; P.vel[b + 1] = 0; P.vel[b] *= 0.6; P.vel[b + 2] *= 0.6; }
     const s = P.life[i] > 0 ? P.size[i] * (P.life[i] / P.max[i]) : 0;
     dummy.position.set(P.pos[b], P.pos[b + 1], P.pos[b + 2]); dummy.scale.set(s, s, s); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
     particles.setMatrixAt(i, dummy.matrix);

@@ -14,8 +14,29 @@ function fakeConn(id, name) {
   const c = { id, name, msgs: [], raw(s) { this.msgs.push(JSON.parse(s)); }, send(o) { this.msgs.push(o); } };
   return c;
 }
+// The tests below were written against a plain open arena (the old Dead Town); the real default map is covered by testDeadTownConnected.
+function arenaMap() {
+  const w = 40, h = 40, g = Array.from({ length: h }, () => new Array(w).fill('.'));
+  const fill = (x0, y0, x1, y1, ch) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) g[y][x] = ch; };
+  const frame = (x0, y0, x1, y1) => { fill(x0, y0, x1, y0, '#'); fill(x0, y1, x1, y1, '#'); fill(x0, y0, x0, y1, '#'); fill(x1, y0, x1, y1, '#'); };
+  const pt = (x, y, item) => (item ? { x, y, item } : { x, y });
+  frame(0, 0, w - 1, h - 1);
+  frame(6, 6, 15, 13); fill(10, 13, 11, 13, '.'); fill(15, 9, 15, 10, '.');
+  frame(24, 6, 33, 13); fill(28, 13, 29, 13, '.'); fill(24, 9, 24, 10, '.');
+  frame(6, 26, 15, 33); fill(10, 26, 11, 26, '.'); fill(15, 29, 15, 30, '.');
+  frame(24, 26, 33, 33); fill(28, 26, 29, 26, '.'); fill(24, 29, 24, 30, '.');
+  fill(16, 2, 23, 5, 'H'); fill(19, 6, 20, 8, '^');
+  fill(16, 34, 23, 37, 'H'); fill(19, 31, 20, 33, 'v');
+  fill(1, 16, 4, 23, 'H'); fill(5, 19, 7, 20, '<');
+  fill(35, 16, 38, 23, 'H'); fill(32, 19, 34, 20, '>');
+  for (const [x, y] of [[17, 17], [22, 17], [17, 22], [22, 22]]) g[y][x] = '#';
+  const playerSpawns = [pt(19, 19), pt(20, 19), pt(19, 20), pt(20, 20), pt(18, 19), pt(21, 20), pt(18, 20), pt(21, 19)];
+  const zombieSpawns = [pt(2, 2), pt(37, 2), pt(2, 37), pt(37, 37), pt(10, 2), pt(29, 37), pt(2, 12), pt(37, 28)];
+  const itemSpawns = [pt(9, 8, 'shotgun'), pt(30, 9, 'smg'), pt(9, 30, 'medkit'), pt(30, 30, 'rifle'), pt(19, 15, 'random'), pt(20, 24, 'random')];
+  return { id: 'arena', name: 'Arena', w, h, tiles: g.map((r) => r.join('')), playerSpawns, zombieSpawns, itemSpawns };
+}
 function mkRoom(extra) {
-  return new Room('t1', Object.assign({ name: 'T', map: buildDefaultMaps()[0], items, waves: 2, difficulty: 'easy', maxPlayers: 4 }, extra));
+  return new Room('t1', Object.assign({ name: 'T', map: arenaMap(), items, waves: 2, difficulty: 'easy', maxPlayers: 4 }, extra));
 }
 
 // ---------- unit tests ----------
@@ -23,7 +44,7 @@ function testMaps() {
   for (const m of buildDefaultMaps()) {
     const c = sanitizeMap(m);
     assert.strictEqual(c.tiles.length, c.h);
-    for (const s of c.playerSpawns.concat(c.zombieSpawns, c.itemSpawns)) assert.strictEqual(c.tiles[s.y][s.x], '.', m.name + ' spawn on floor');
+    for (const s of c.playerSpawns.concat(c.zombieSpawns, c.itemSpawns)) assert.ok('.Hs'.includes(c.tiles[s.y][s.x]), m.name + ' spawn on floor');
   }
   assert.throws(() => sanitizeMap({ name: 'x', w: 20, h: 20, tiles: [] }));
   assert.throws(() => sanitizeItem(null));
@@ -134,6 +155,122 @@ function testCombatAndItems() {
   const wallRow = r.map.tiles[6];
   assert.ok(wallRow.includes('#'));
   ok('hitscan pierce, drop/equip weapon, pick up + use heal');
+}
+
+function testTerrainAndHeadshots() {
+  const r = mkRoom({ waves: 0 });
+  const a = fakeConn(1, 'Ann');
+  const p = r.join(a);
+  r.startGame();
+  r.timer = 99999;
+  assert.strictEqual(r.hAt(19.5, 3.5), 1, 'platform is high');
+  assert.strictEqual(r.hAt(19.5, 12.5), 0, 'street is low');
+  const mid = r.hAt(19.5, 7.5);
+  assert.ok(mid > 0.3 && mid < 0.7, 'ramp is a slope: ' + mid);
+  // a cliff stops you; the ramp lets you up and back down
+  const walk = (x, y, dx, dy, steps) => { const e = { x, y }; for (let i = 0; i < steps; i++) r.move(e, dx * 0.2, dy * 0.2, 0.38); return e; };
+  const cliff = walk(17.5, 9.5, 0, -1, 40);
+  assert.ok(cliff.y > 5.9 && r.hAt(cliff.x, cliff.y) === 0, 'cannot climb the platform edge, stopped at y=' + cliff.y.toFixed(2));
+  const up = walk(19.5, 9.5, 0, -1, 25);
+  assert.ok(up.y < 5 && r.hAt(up.x, up.y) === 1, 'walks up the ramp to y=' + up.y.toFixed(2));
+  const down = walk(up.x, up.y, 0, 1, 25);
+  assert.ok(down.y > 9 && r.hAt(down.x, down.y) === 0, 'and back down');
+  const ledge = walk(19.5, 3.5, 1, 0, 3); assert.ok(ledge.x > 19.5, 'free to walk on the platform');
+  const side = walk(16.5, 3.5, -1, 0, 20); assert.ok(side.x < 16 && r.hAt(side.x, side.y) === 0, 'walking off the edge drops you to the ground: ' + side.x.toFixed(2));
+  // bots plan around cliffs
+  const path = r.bfs(17, 9, 17, 4);
+  assert.ok(path.length === 0 || path.some(([x, y]) => x > 18.5 && x < 21 && y > 5.5), 'bots use the ramp');
+  // headshots: only on the killing shot, about 1 in 20
+  r.itemDefs.pistol = Object.assign({}, r.itemDefs.pistol, { spread: 0 });
+  const shoot = (hp) => {
+    r.zombies.length = 0;
+    const z = { id: 950, type: 0, x: 23.5, y: 19.5, hp, maxHp: 100, spd: 0, dmg: 0, r: 0.38, cd: 0, side: 1, dead: false };
+    r.zombies.push(z);
+    p.x = 19.5; p.y = 19.5; p.a = 0; p.cd = 0; p.ammo = 50; p.weapon = 'pistol'; p.sentHs = 0; p.dead = false;
+    a.msgs.length = 0;
+    r.fire(p);
+    return a.msgs.some((m) => m.t === 'hs');
+  };
+  let nonKillHs = 0, killHs = 0;
+  for (let i = 0; i < 300; i++) if (shoot(100)) nonKillHs++;
+  for (let i = 0; i < 600; i++) if (shoot(1)) killHs++;
+  assert.strictEqual(nonKillHs, 0, 'no headshots unless the shot kills');
+  assert.ok(killHs >= 10 && killHs <= 60, 'about 5% of kills are headshots: ' + killHs + '/600');
+  ok('ramps + high ground (cliffs block climbing, edges drop you, bots path) and 5% kill-shot headshots');
+}
+
+function testDoorsBushesGrenades() {
+  const { sanitizeMap } = require('../server/content');
+  // 20x20 test arena: a wall with a door at x=10, a bush patch, a pond
+  const rows = [];
+  for (let y = 0; y < 20; y++) { let row = ''; for (let x = 0; x < 20; x++) row += y === 0 || y === 19 || x === 0 || x === 19 ? '#' : '.'; rows.push(row.split('')); }
+  for (let y = 1; y < 19; y++) rows[y][10] = '#';
+  rows[9][10] = 'D'; rows[10][10] = 'D';
+  rows[3][3] = 'b'; rows[3][4] = 'b'; rows[15][15] = 'b'; rows[12][5] = 'w';
+  const map = sanitizeMap({ name: 'Test', w: 20, h: 20, tiles: rows.map((r) => r.join('')), playerSpawns: [{ x: 2, y: 2 }], zombieSpawns: [{ x: 17, y: 17 }], itemSpawns: [] });
+  const r = new Room('t2', { name: 'T', map, items, mode: 'pvp', killLimit: 0, difficulty: 'easy', maxPlayers: 4 });
+  const ca = fakeConn(1, 'A'), cb = fakeConn(2, 'B');
+  const a = r.join(ca), b = r.join(cb);
+  r.startGame(); r.ground = [];
+  a.inv = b.inv = 0; a.hp = b.hp = 100;
+  // doors: closed blocks walking and shooting, E opens both halves, then it can be closed again
+  a.x = 9.0; a.y = 9.9; b.x = 12.5; b.y = 9.9;
+  assert.ok(r.solid(10, 9) && r.sight(10, 9), 'closed door is solid');
+  r.act(a, 'equip');
+  assert.ok(!r.solid(10, 9) && !r.solid(10, 10) && !r.sight(10, 9), 'E opens the whole double door');
+  assert.ok(r.ev.some((e) => e[0] === 'o' && e[1] === 1), 'door event broadcast');
+  a.x = 10.5; a.y = 9.9; r.act(a, 'equip');
+  assert.ok(!r.solid(10, 9), 'cannot close a door you are standing in');
+  a.x = 9.0; r.act(a, 'equip');
+  assert.ok(r.solid(10, 9) && r.solid(10, 10), 'E closes it');
+  const w = { x: 5.5, y: 12.5 };
+  assert.ok(r.blocked(5.5, 12.5, 0.2), 'water blocks walking');
+  assert.ok(!r.sight(5, 12), 'but not shots');
+  // bushes: hidden from people outside the bushes, visible to people inside
+  a.x = 3.5; a.y = 3.5; b.x = 12.5; b.y = 5.5;
+  assert.ok(!r.canSee(b, a), 'player in a bush is hidden');
+  assert.ok(r.canSee(a, b), 'but sees out');
+  b.x = 15.5; b.y = 15.5;
+  assert.ok(!r.canSee(b, a), 'a different, separate patch of bushes does not help');
+  b.x = 4.5; b.y = 3.5;
+  assert.ok(r.canSee(b, a) && r.canSee(a, b), 'two players in the same patch see each other');
+  b.x = 12.5; b.y = 5.5; cb.msgs.length = 0; r.sendSnapshot();
+  const snap = cb.msgs.find((m) => m.t === 's');
+  const ta = snap && snap.p.find((t) => t[0] === a.id);
+  assert.ok(ta && ta[19] === 1 && ta[1] === 0 && ta[2] === 0 && ta[8] === a.kills, 'hidden player stays in the list (name/score) but with no position');
+  // grenades: throw, fuse, blast damages (self at half), walls shield
+  r.act(a, 'equip'); // (no-op)
+  a.x = 3.5; a.y = 8.5; a.a = 0; b.x = 7.5; b.y = 8.5; b.hp = 100; a.hp = 100;
+  assert.strictEqual(a.nades, 1, 'start with a grenade');
+  r.act(a, 'nade');
+  assert.strictEqual(a.nades, 0); assert.strictEqual(r.nades.length, 1);
+  b.x = 5.8; // sits near where the grenade will stop
+  for (let i = 0; i < 40; i++) r.tick();
+  assert.ok(r.nades.length === 0, 'it exploded');
+  assert.ok(b.hp < 100 || b.dead, 'blast hurt the enemy: hp ' + b.hp);
+  // auto pickups: better armor swaps, worse armor is ignored, heals are used in pvp
+  r.respawn(a); a.x = 4.5; a.y = 14.5; a.armor = 30; a.hp = 50;
+  r.ground = []; r.addGround(4.5, 14.5, 'vest', 0); r.addGround(4.6, 14.5, 'medkit', 0);
+  r.autoPickup(a); r.autoPickup(a);
+  assert.strictEqual(a.armor, 40, 'auto-swapped to the better vest');
+  assert.ok(a.hp > 50, 'medkit auto-used when hurt in pvp');
+  r.addGround(4.5, 14.5, 'vest', 0); r.autoPickup(a);
+  assert.strictEqual(r.ground.length, 1, 'same armor level is left on the floor');
+  a.hp = 100; r.addGround(4.5, 14.5, 'bandage', 0); const n0 = r.ground.length; r.autoPickup(a);
+  assert.strictEqual(r.ground.length, n0, 'full health: heal stays');
+  ok('doors (E, double door, blocked closing), bushes hide players, water, grenades, auto armor swap + auto heal');
+}
+
+function testDeadTownConnected() {
+  const map = buildDefaultMaps()[0];
+  const r = new Room('t3', { name: 'T', map, items, mode: 'pvp', difficulty: 'easy', maxPlayers: 4 });
+  assert.ok(map.tiles.join('').includes('D') && map.tiles.join('').includes('b') && map.tiles.join('').includes('w') && /[<>^v]/.test(map.tiles.join('')), 'showcases doors, bushes, water, ramps');
+  const pts = map.playerSpawns.concat(map.zombieSpawns, map.itemSpawns);
+  for (const q of pts) assert.ok(!r.baseSolid[q.y * map.w + q.x], 'spawn/item on walkable tile ' + q.x + ',' + q.y);
+  const from = map.playerSpawns[0];
+  const reach = (a, b) => r.bfs(a.x, a.y, b.x, b.y).length > 0 || (a.x === b.x && a.y === b.y);
+  for (const q of pts) assert.ok(reach(from, q) && reach(q, from), `reachable both ways (doors count as passable): ${q.x},${q.y}`);
+  ok('Dead Town: every spawn and item is reachable (ramps, doors, tunnels)');
 }
 
 function testMovementCollision() {
@@ -382,7 +519,7 @@ function testArmorAndDamage() {
   const pa = r.join(a), pb = r.join(b);
   r.startGame(); r.ground = [];
   pa.x = 17.5; pa.y = 19.5; pa.a = 0; pa.inv = 0; pa.weapon = 'rifle'; pa.cd = 0;
-  pb.x = 21.5; pb.y = 19.5; pb.inv = 0;
+  pb.x = 21.5; pb.y = 19.8; pb.inv = 0; // (off the centre line, so no headshot)
   r.fire(pa);
   assert.ok(Math.abs(pb.hp - (100 - 34 * 0.7)) < 0.01, 'weapon damage is 30% weaker: ' + pb.hp);
   // armor soaks 60% of each hit until used up
@@ -557,7 +694,7 @@ async function testNetwork() {
 }
 
 (async () => {
-  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testTeams(); testArmorAndDamage(); testLook();
+  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testTerrainAndHeadshots(); testDoorsBushesGrenades(); testDeadTownConnected(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testTeams(); testArmorAndDamage(); testLook();
   await testNetwork();
   console.log('\nAll ' + passed + ' checks passed');
   process.exit(0);

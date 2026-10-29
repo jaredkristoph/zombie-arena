@@ -22,7 +22,8 @@ export class Object3D extends Obj {}
 export class Scene extends Obj {}
 export class Mesh extends Obj { constructor(g, m) { super(); this.geometry = g; this.material = m; } }
 export class InstancedMesh extends Mesh { constructor(g, m, n) { super(g, m); this.count = n; this.instanceMatrix = {}; this.instanceColor = {}; } setMatrixAt() {} setColorAt() {} }
-class Geo { rotateX() { return this; } dispose() {} }
+class Geo { rotateX() { return this; } dispose() {} setAttribute() {} computeVertexNormals() {} }
+export class BufferGeometry extends Geo {} export class Float32BufferAttribute { constructor(a, n) { this.array = a; this.n = n; } }
 export class BoxGeometry extends Geo {} export class CircleGeometry extends Geo {} export class PlaneGeometry extends Geo {} export class RingGeometry extends Geo {}
 class Mat { constructor(o = {}) { Object.assign(this, o); this.color = new Color(o.color); } }
 export class MeshBasicMaterial extends Mat {} export class MeshLambertMaterial extends Mat {}
@@ -127,7 +128,7 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   // second player (bot) joins and chats in the room lobby
   const bot = new WebSocket('ws://127.0.0.1:' + port + '/ws');
   const botMsgs = [];
-  bot.on('message', (d) => botMsgs.push(JSON.parse(d.toString())));
+  bot.on('message', (d) => { const m = JSON.parse(d.toString()); m._t = Date.now(); botMsgs.push(m); });
   await new Promise((r) => bot.on('open', r));
   bot.send(JSON.stringify({ t: 'hello', name: 'Botty' }));
   await until(() => botMsgs.find((m) => m.t === 'hello_ok'));
@@ -177,11 +178,12 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
     await stepFrames(1500);
     global.__delayMs = delay; S.stam = 100;
     const x0 = S.me.x;
-    fire('keydown', { code: 'KeyD' }); await stepFrames(100); fire('keydown', { code: 'ShiftLeft' }); await stepFrames(60); fire('keyup', { code: 'ShiftLeft' });
+    fire('keydown', { code: 'KeyD' }); await stepFrames(100); const tShift = Date.now(); const ddBefore = botMsgs.filter((m) => m.t === 'dd').length; fire('keydown', { code: 'ShiftLeft' }); await stepFrames(60);
+    if (delay === 0) { const dd = botMsgs.filter((m) => m.t === 'dd')[ddBefore]; console.log('   Shift pressed -> other player gets the dash message after', dd ? (dd._t - tShift) + ' ms' : 'NEVER'); assert.ok(dd && dd._t - tShift < 150, 'dash message reaches others right away'); } fire('keyup', { code: 'ShiftLeft' });
     fire('keyup', { code: 'KeyD' });
     let minX = 99, log = [];
     for (let i = 0; i < 16; i++) { await stepFrames(100); log.push((S.me.x - x0).toFixed(1)); minX = Math.min(minX, i > 4 ? S.me.x - x0 : 99); }
-    console.log('   delay', delay, 'client x trail:', log.join(' '), 'server', (sp0.x - x0).toFixed(1));
+    console.log('   ddCount', globalThis.__za.ddCount, 'dashSent', globalThis.__za.dashSent, 'readout:', document.getElementById('ping') && document.getElementById('ping').textContent); console.log('   delay', delay, 'client x trail:', log.join(' '), 'server', (sp0.x - x0).toFixed(1));
     assert.ok(S.me.x - x0 > 3, 'ended ahead after dash (delay ' + delay + ')');
     assert.ok(minX > 2.5, 'never pulled back after the roll (delay ' + delay + '): min ' + minX.toFixed(2));
     global.__delayMs = 0; await stepFrames(900);
@@ -192,9 +194,12 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   {
     const botId = botMsgs.find((m) => m.t === 'hello_ok').id;
     const W3m = globalThis.__za.W3;
-    bot.send(JSON.stringify({ t: 'in', seq: 1, dx: 1, dy: 0, dt: 50, sh: 0, sp: 1, dh: 1, aa: 0 }));
-    let maxRot = 0, sawRoll = 0; const px0 = W3m.playerView(botId).root.position.x; let pxMax = px0;
-    for (let i = 0; i < 12; i++) { await stepFrames(60); const v = W3m.playerView(botId); if (v) { pxMax = Math.max(pxMax, v.root.position.x); maxRot = Math.max(maxRot, Math.abs(v.model.rotation.x)); if (v.rollT > 0) sawRoll++; if (v.rollTimer > 0) globalThis.__evRoll = (globalThis.__evRoll || 0) + 1; } }
+    // dash the bot toward whichever side has the most open floor
+    const bp = globalThis.__za.latest.p.get(botId); let bdx = 1, bdy = 0, bestRun = -1;
+    for (const [ddx, ddy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { let run = 0; while (run < 8 && !globalThis.__za.blockedAt(bp[1] + ddx * (run + 1) * 0.5, bp[2] + ddy * (run + 1) * 0.5)) run++; if (run > bestRun) { bestRun = run; bdx = ddx; bdy = ddy; } }
+    bot.send(JSON.stringify({ t: 'in', seq: 1, dx: bdx, dy: bdy, dt: 50, sh: 0, sp: 1, dh: 1, aa: 0 }));
+    let maxRot = 0, sawRoll = 0; const px0 = bdx ? W3m.playerView(botId).root.position.x * bdx : W3m.playerView(botId).root.position.z * bdy; let pxMax = px0;
+    for (let i = 0; i < 12; i++) { await stepFrames(60); const v = W3m.playerView(botId); if (v) { pxMax = Math.max(pxMax, bdx ? v.root.position.x * bdx : v.root.position.z * bdy); maxRot = Math.max(maxRot, Math.abs(v.model.rotation.x)); if (v.rollT > 0) sawRoll++; if (v.rollTimer > 0) globalThis.__evRoll = (globalThis.__evRoll || 0) + 1; } }
     console.log('   other player roll: max rotation', maxRot.toFixed(2), 'frames rolling', sawRoll);
     assert.ok(sawRoll > 3 && maxRot > 1, 'roll animation shows on other players'); assert.ok(globalThis.__evRoll > 3, 'started by the dash event'); console.log('   bot drawn moving', (pxMax - px0).toFixed(2), 'tiles during its dash'); assert.ok(pxMax - px0 > 3, 'observer plays the scripted dash movement');
     await stepFrames(1500);
