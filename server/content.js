@@ -2,16 +2,18 @@
 // Default items + maps and validators for admin-supplied content.
 
 const DEFAULT_ITEMS = [
-  { id: 'pistol', name: 'Pistol', type: 'weapon', builtin: true, damage: 20, rate: 3.5, range: 14, pellets: 1, spread: 0.03, pierce: 0, color: '#ffd166' },
-  { id: 'smg', name: 'SMG', type: 'weapon', builtin: true, damage: 11, rate: 11, range: 12, pellets: 1, spread: 0.09, pierce: 0, color: '#06d6a0' },
-  { id: 'shotgun', name: 'Shotgun', type: 'weapon', builtin: true, damage: 11, rate: 1.3, range: 8, pellets: 7, spread: 0.3, pierce: 0, color: '#ef476f' },
-  { id: 'rifle', name: 'Rifle', type: 'weapon', builtin: true, damage: 34, rate: 4.5, range: 18, pellets: 1, spread: 0.015, pierce: 1, color: '#118ab2' },
-  { id: 'sniper', name: 'Sniper', type: 'weapon', builtin: true, damage: 130, rate: 0.8, range: 32, pellets: 1, spread: 0, pierce: 3, color: '#9b5de5' },
+  { id: 'pistol', name: 'Pistol', type: 'weapon', weight: 1, builtin: true, damage: 20, rate: 3.5, range: 14, pellets: 1, spread: 0.03, pierce: 0, color: '#ffd166' },
+  { id: 'smg', name: 'SMG', type: 'weapon', weight: 2.5, builtin: true, damage: 11, rate: 11, range: 12, pellets: 1, spread: 0.09, pierce: 0, color: '#06d6a0' },
+  { id: 'shotgun', name: 'Shotgun', type: 'weapon', weight: 3.5, builtin: true, damage: 11, rate: 1.3, range: 8, pellets: 7, spread: 0.3, pierce: 0, color: '#ef476f' },
+  { id: 'rifle', name: 'Rifle', type: 'weapon', weight: 4, builtin: true, damage: 34, rate: 4.5, range: 18, pellets: 1, spread: 0.015, pierce: 1, color: '#118ab2' },
+  { id: 'sniper', name: 'Sniper', type: 'weapon', weight: 6, builtin: true, damage: 130, rate: 0.8, range: 32, pellets: 1, spread: 0, pierce: 3, color: '#9b5de5' },
   { id: 'bandage', name: 'Bandage', type: 'heal', builtin: true, heal: 25, color: '#f1f1f1' },
   { id: 'medkit', name: 'Medkit', type: 'heal', builtin: true, heal: 60, color: '#ff4d4d' },
-  { id: 'sword', name: 'Sword', type: 'weapon', melee: true, builtin: true, damage: 40, rate: 2.3, range: 2.2, arc: 1.8, pellets: 1, spread: 0, pierce: 0, color: '#c9d6df' },
-  { id: 'katana', name: 'Katana', type: 'weapon', melee: true, builtin: true, damage: 13, rate: 4, range: 2.5, arc: 1.4, pellets: 1, spread: 0, pierce: 0, color: '#e0e7ff' },
-  { id: 'greatsword', name: 'Greatsword', type: 'weapon', melee: true, builtin: true, damage: 90, rate: 1.1, range: 2.9, arc: 2.3, pellets: 1, spread: 0, pierce: 0, color: '#f4a261' },
+  { id: 'gatling', name: 'Gatling Gun', type: 'weapon', weight: 9, builtin: true, damage: 6, rate: 16, range: 13, pellets: 1, spread: 0.13, pierce: 0, heat: 0.02, lock: 2.8, color: '#e76f51' },
+  { id: 'launcher', name: 'Grenade Launcher', type: 'weapon', weight: 7, builtin: true, launcher: true, damage: 65, radius: 2.6, rate: 0.55, range: 14, pellets: 1, spread: 0, pierce: 0, ammoCost: 6, color: '#8ab17d' },
+  { id: 'sword', name: 'Sword', type: 'weapon', weight: 2.5, melee: true, builtin: true, damage: 40, rate: 2.3, range: 2.2, arc: 1.8, pellets: 1, spread: 0, pierce: 0, color: '#c9d6df' },
+  { id: 'katana', name: 'Katana', type: 'weapon', weight: 1.2, melee: true, builtin: true, move: 1.5, damage: 13, rate: 4, range: 2.5, arc: 1.4, pellets: 1, spread: 0, pierce: 0, color: '#e0e7ff' },
+  { id: 'greatsword', name: 'Greatsword', type: 'weapon', weight: 6, melee: true, builtin: true, damage: 90, rate: 1.1, range: 2.9, arc: 2.3, pellets: 1, spread: 0, pierce: 0, color: '#f4a261' },
   { id: 'vest', name: 'Light Vest', type: 'armor', builtin: true, amount: 40, color: '#4cc9f0' },
   { id: 'plate', name: 'Heavy Armor', type: 'armor', builtin: true, amount: 80, color: '#9d4edd' },
   { id: 'grenade', name: 'Grenade', type: 'grenade', builtin: true, damage: 85, radius: 3.4, amount: 1, color: '#7cb518' },
@@ -109,9 +111,9 @@ function buildDeadTown() {
   const itemSpawns = [
     pt(23, 5, 'rifle'), pt(18, 8, 'medkit'), pt(40, 5, 'sniper'), pt(38, 8, 'plate'),
     pt(5, 16, 'plate'), pt(11, 14, 'grenade'), pt(5, 33, 'shotgun'), pt(7, 40, 'random'),
-    pt(24, 20, 'grenade'), pt(23, 28, 'smg'), pt(25, 14, 'random'), pt(43, 25, 'grenade'),
+    pt(24, 20, 'grenade'), pt(23, 28, 'smg'), pt(25, 14, 'gatling'), pt(43, 25, 'grenade'),
     pt(44, 18, 'random'), pt(44, 33, 'medkit'), pt(20, 41, 'vest'), pt(15, 41, 'ammo'),
-    pt(33, 42, 'random'), pt(13, 24, 'random'), pt(36, 18, 'random'), pt(30, 34, 'bandage'),
+    pt(33, 42, 'random'), pt(13, 24, 'random'), pt(36, 18, 'launcher'), pt(30, 34, 'bandage'),
   ];
   return { id: 'dead-town', name: 'Dead Town', w, h, tiles: g.map((r) => r.join('')), playerSpawns, zombieSpawns, itemSpawns, builtin: true };
 }
@@ -162,6 +164,10 @@ function sanitizeItem(raw) {
     range: num(raw.range, melee ? 1 : 3, 40, melee ? 2.2 : 14), pellets: Math.round(num(raw.pellets, 1, 16, 1)),
     spread: num(raw.spread, 0, 0.8, 0.05), pierce: Math.round(num(raw.pierce, 0, 5, 0)),
   };
+  if (raw.launcher) { out.launcher = true; out.radius = num(raw.radius, 1, 8, 2.6); out.ammoCost = Math.round(num(raw.ammoCost, 1, 30, 6)); out.range = Math.min(out.range, 30); }
+  if (raw.heat) { out.heat = num(raw.heat, 0.002, 0.5, 0.02); out.lock = num(raw.lock, 0.5, 8, 2.8); }
+  if (raw.weight) out.weight = num(raw.weight, 0, 20, 0);
+  if (raw.move) out.move = num(raw.move, 0.4, 3, 1);
   if (melee) { out.melee = true; out.arc = num(raw.arc, 0.5, 3.2, 1.8); out.range = Math.min(out.range, 4); }
   return out;
 }

@@ -36,6 +36,25 @@ function loadStore() {
     if (k && k.builtin && k.damage === 26) k.damage = 13;
     store.seeded.push('katana-v2');
   }
+  // gun weights (once): heavier guns slow you down; the Gatling / Launcher speed tweaks now come from their weight
+  if (!store.seeded.includes('weights-v1')) {
+    const W = { pistol: 1, smg: 2.5, shotgun: 3.5, rifle: 4, sniper: 6, gatling: 9, launcher: 7, sword: 2.5, katana: 1.2, greatsword: 6 };
+    for (const i of store.items) if (i.builtin && W[i.id] !== undefined && i.weight === undefined) i.weight = W[i.id];
+    for (const id of ['gatling', 'launcher']) { const i = store.items.find((x) => x.id === id); if (i && i.builtin) delete i.move; }
+    store.seeded.push('weights-v1');
+  }
+  // katana: walk 100% faster while it is in your hands (once)
+  if (!store.seeded.includes('katana-run')) {
+    const k = store.items.find((i) => i.id === 'katana');
+    if (k && k.builtin && !k.move) k.move = 2;
+    store.seeded.push('katana-run');
+  }
+  // katana run speed lowered from +100% to +50% (once)
+  if (!store.seeded.includes('katana-run-150')) {
+    const k = store.items.find((i) => i.id === 'katana');
+    if (k && k.builtin && k.move === 2) k.move = 1.5;
+    store.seeded.push('katana-run-150');
+  }
   // Dead Town was redesigned (ramps, doors, bushes, water; once; a map the admin made or renamed is left alone)
   if (!store.seeded.includes('deadtown-v3')) {
     const i = store.maps.findIndex((m) => m.id === 'dead-town' && m.builtin);
@@ -44,7 +63,7 @@ function loadStore() {
   }
   // items added in later versions are seeded once into existing data files (and can then be deleted by the admin)
   for (const d of DEFAULT_ITEMS) {
-    if (!['ammo', 'sword', 'katana', 'greatsword', 'vest', 'plate', 'grenade'].includes(d.id) || store.seeded.includes(d.id)) continue;
+    if (!['ammo', 'sword', 'katana', 'greatsword', 'vest', 'plate', 'grenade', 'gatling', 'launcher'].includes(d.id) || store.seeded.includes(d.id)) continue;
     if (!store.items.some((i) => i.id === d.id)) store.items.push({ ...d });
     store.seeded.push(d.id);
   }
@@ -279,7 +298,7 @@ function onMessage(c, m) {
         takeOver(c, back.room, back.player, back.old);
       } else if (!c.token) c.token = crypto.randomBytes(12).toString('hex');
       liveByToken.set(c.token, c);
-      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b25', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
+      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b29', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
       if (back) { back.room.resume(back.player); pushRooms(); return; }
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;

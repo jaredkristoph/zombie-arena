@@ -76,6 +76,14 @@ Dead Town is now an asymmetric, dust-style map: T spawn bottom, CT spawn top, an
 - **Auto pick-up**: walking over **armor** better than yours swaps to it, walking over a **heal** when hurt in PvP uses it right away, and ammo and grenades are taken automatically. **E** still picks up weapons and puts heals in your bag.
 - The map editor has tiles for all of these.
 
+## Gatling gun, grenade launcher, katana speed, bots
+
+- **Gatling Gun**: 16 shots a second, low damage per bullet, wide spread, and you walk 20% slower with it. Holding the trigger builds **heat** (shown next to your ammo); at 100% it overheats, jams for about 3 seconds and cannot fire until it cools. Letting go cools it slowly.
+- **Grenade Launcher**: fires an explosive shell that goes off on the first wall or enemy it touches. Each shell costs 6 ammo and the reload is about 1.8 seconds. Explosion damage is 65 with a 2.6 tile radius (weaker than a thrown grenade, but repeatable).
+- **Gun weights**: every weapon has a weight in kg (pistol 1, SMG 2.5, shotgun 3.5, rifle 4, sniper 6, launcher 7, gatling 9; swords 1.2-6). Each kg slows you by 2% (never below 60%). The weight shows on your HUD and when you stand next to a weapon. Weapons on the floor and in your hands have their own shapes (shots leave from the barrel tip of whatever you hold). The admin item editor has a weight field.
+- **Katana**: while you hold it you walk 50% faster.
+- **Bots** are weaker on every difficulty: more aim error, slower to notice and turn, and slower on foot (Easy walks at 62% speed).
+
 ## Your character
 
 The home screen and room lobby show your character on a turntable. Change the **head accessory** (25 hats: cap, cowboy hat, crown, bunny ears, halo, viking helmet, chef hat, jester, unicorn, pumpkin...) with the left/right buttons or the **left/right arrow keys**, and the **outfit** (10 styles: hoodie, red jacket, camo, striped tee, punk, lab coat, knight, overalls, ninja, or your team colour) with the outfit buttons or the **up/down arrow keys**. **Randomize look** picks both at random. Your team colour shows as a ring under your feet. It is remembered in your browser and other players see it in game. Bots get a random one.

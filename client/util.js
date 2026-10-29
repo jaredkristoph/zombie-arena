@@ -120,3 +120,6 @@ export function sfx(kind, vol = 1) {
     default:
   }
 }
+
+// heavier weapons slow you down: 2% per kg (min 60%); an explicit `move` (katana = 2) overrides it. Same maths as the server.
+export const weaponSpeed = (d) => (d ? d.move || Math.max(0.6, 1 - (d.weight || 0) * 0.02) : 1);

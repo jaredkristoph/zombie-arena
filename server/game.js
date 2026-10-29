@@ -10,6 +10,8 @@ const AMMO_START = 90, AMMO_MAX = 240, WAVE_AMMO = 25, AMMO_PICK_R = 0.95, ACC_C
 // headshots: only the shot that KILLS can be one, and only HS_CHANCE of the time
 const HS_CHANCE = 0.05;
 // grenades (F): thrown along your aim, bounce off walls, explode after a fuse
+// heavier weapons slow you down: 2% per kg (min 60%); an explicit `move` (katana = 2) overrides it
+const weaponSpeed = (d) => d.move || Math.max(0.6, 1 - (d.weight || 0) * 0.02);
 const NADE_MAX = 4, NADE_START = 1, NADE_FUSE = 1.7, NADE_SPEED = 11;
 const TEAM_COLORS = ['#ff595e', '#3a86ff'], TEAM_NAMES = ['Red', 'Blue'];
 // all weapon damage is scaled down so fights last longer; armor soaks part of every hit until it is used up
@@ -19,11 +21,12 @@ const STAM_MAX = 100, DASH_TIME = 0.55, DASH_MULT = 2.4, KILL_BOOST = 1.2, KILL_
 const RESPAWN_SECONDS = 10, SPAWN_PROTECT = 2, PVP_ITEM_EVERY = 25, MAX_BOTS = 7;
 const BOT_NAMES = ['Rex', 'Nova', 'Blitz', 'Vex', 'Ghost', 'Rogue', 'Viper', 'Echo'];
 // bot skill per difficulty: aim error (rad), turn speed (rad/s), reaction delay (s)
+// (bots were too strong even on easy: more aim error, slower to notice and turn, and slower on their feet)
 const BOT_SKILL = {
-  easy: { err: 0.28, turn: 5, react: 0.7 },
-  normal: { err: 0.16, turn: 8, react: 0.45 },
-  hard: { err: 0.08, turn: 12, react: 0.25 },
-  nightmare: { err: 0.03, turn: 18, react: 0.12 },
+  easy: { err: 0.5, turn: 3.2, react: 1.2, spd: 0.62 },
+  normal: { err: 0.3, turn: 5.5, react: 0.8, spd: 0.75 },
+  hard: { err: 0.15, turn: 8.5, react: 0.45, spd: 0.85 },
+  nightmare: { err: 0.06, turn: 14, react: 0.22, spd: 0.95 },
 };
 const normAng = (a) => { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; };
 const COLORS = ['#ff595e', '#1982c4', '#8ac926', '#ffca3a', '#6a4c93', '#ff924c', '#4dd0e1', '#f06292'];
@@ -336,7 +339,7 @@ class Room {
     const sp = this.mode === 'pvp' ? this.respawnSpot(p) : this.map.playerSpawns[Math.floor(rand() * this.map.playerSpawns.length)];
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0; p.heat = 0; p.lock = 0;
   }
   // pvp respawn: the spawn point farthest from every living enemy
   respawnSpot(p) {
@@ -355,7 +358,7 @@ class Room {
     const sp = this.respawnSpot(p);
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0; p.heat = 0; p.lock = 0;
     this.ev.push(['r', p.id]);
   }
   startGame() {
@@ -455,7 +458,7 @@ class Room {
       if (aim === null) p.a = Math.atan2(dy, dx);
       let boost = 0;
       if ((m.sp === 1 || m.sp === true) && p.dashLeft > 0) { boost = Math.min(use, p.dashLeft); p.dashLeft -= boost; }
-      const dist = PLAYER_SPEED * (p.boostT > 0 ? KILL_BOOST : 1) * (boost * DASH_MULT + (use - boost));
+      const dist = PLAYER_SPEED * weaponSpeed(this.weapon(p.weapon)) * (p.boostT > 0 ? KILL_BOOST : 1) * (boost * DASH_MULT + (use - boost));
       this.move(p, dx * dist, dy * dist, PLAYER_R);
     }
   }
@@ -532,9 +535,15 @@ class Room {
   fire(p) {
     const w = this.weapon(p.weapon);
     if (w.melee) return this.swing(p, w);
-    if (p.ammo <= 0) { p.cd = 0.3; this.ev.push(['e', p.id]); return; }
-    p.ammo--;
+    const cost = w.ammoCost || 1;
+    if (p.ammo < cost) { p.cd = 0.3; this.ev.push(['e', p.id]); return; }
+    p.ammo -= cost;
     p.cd = 1 / w.rate;
+    if (w.heat) { // gatling: firing builds heat; at 100% it jams and you wait out the cooldown
+      p.heat += w.heat;
+      if (p.heat >= 1) { p.heat = 1; p.lock = w.lock || 2.8; this.ev.push(['j', p.id]); }
+    }
+    if (w.launcher) { p.inv = 0; return this.launch(p, w); }
     p.inv = 0; // shooting ends spawn protection
     const pvp = this.mode === 'pvp';
     // targets: other players that are alive and not spawn-protected (pvp) or zombies (co-op)
@@ -760,7 +769,7 @@ class Room {
     }
     const len = Math.hypot(mx, my);
     if (len > 0.01) {
-      const sp = PLAYER_SPEED * 0.9 * DT;
+      const sp = PLAYER_SPEED * sk.spd * DT;
       const sx = p.x, sy = p.y;
       this.move(p, (mx / len) * sp, (my / len) * sp, PLAYER_R);
       if (combat && Math.hypot(p.x - sx, p.y - sy) < sp * 0.3) ai.strafe *= -1; // bumped a wall
@@ -789,10 +798,11 @@ class Room {
       else p.stam = Math.min(STAM_MAX, p.stam + (STAM_MAX / DASH_CD) * DT);
       this.autoPickup(p);
       if (p.nadeCd > 0) p.nadeCd -= DT;
+      if (p.lock > 0) { p.lock -= DT; if (p.lock <= 0) { p.lock = 0; p.heat = 0; } } else if (p.heat > 0 && !(p.shoot && this.weapon(p.weapon).heat)) p.heat = Math.max(0, p.heat - 0.3 * DT);
       if (p.bot && this.tickN % 6 === 0) for (const i of this.doorIdx) if (!this.doorOpen.has(i) && (((i % this.W) + 0.5) - p.x) ** 2 + (((i / this.W | 0) + 0.5) - p.y) ** 2 < 2.6) { this.setDoorGroup(p, i, true, true); break; }
       if (p.bot) this.botThink(p);
       p.cd -= DT;
-      if (p.shoot && p.cd <= 0 && !(p.dashT > 0) && this.state === 'playing') this.fire(p);
+      if (p.shoot && p.cd <= 0 && !(p.dashT > 0) && !(p.lock > 0) && this.state === 'playing') this.fire(p);
     }
     if (this.state !== 'playing') { this.ev = []; return; }
     if (pvp) {
@@ -841,19 +851,36 @@ class Room {
     this.nades.push({ id: this.nextId++, owner: p.id, x: sx, y: sy, vx: dx * NADE_SPEED, vy: dy * NADE_SPEED, t: NADE_FUSE });
     this.ev.push(['t', p.id]);
   }
+  // grenade launcher: the shell flies straight, explodes on the first wall / enemy it touches (or when its fuse ends)
+  launch(p, w) {
+    const dx = Math.cos(p.a), dy = Math.sin(p.a);
+    let sx = p.x, sy = p.y;
+    for (const d of [0.7, 0.5, 0.3]) if (!this.sight(Math.floor(p.x + dx * d), Math.floor(p.y + dy * d))) { sx = p.x + dx * d; sy = p.y + dy * d; break; }
+    this.nades.push({ id: this.nextId++, owner: p.id, x: sx, y: sy, vx: dx * 15, vy: dy * 15, t: Math.max(0.4, w.range / 15), shell: w });
+    this.ev.push(['t', p.id]);
+  }
   updateNades() {
     for (let i = this.nades.length - 1; i >= 0; i--) {
       const n = this.nades[i];
       n.t -= DT;
       const nx = n.x + n.vx * DT, ny = n.y + n.vy * DT;
+      if (n.shell) {
+        let boom = n.t <= 0 || this.sight(Math.floor(nx), Math.floor(ny));
+        if (!boom) {
+          if (this.mode === 'pvp') { for (const q of this.alivePlayers()) if (q.id !== n.owner && !(q.inv > 0 || q.dinv > 0) && this.foe(this.players.get(n.owner) || q, q) && (q.x - nx) ** 2 + (q.y - ny) ** 2 < (PLAYER_R + 0.15) ** 2) { boom = true; break; } }
+          else for (const z of this.zombies) if (!z.dead && (z.x - nx) ** 2 + (z.y - ny) ** 2 < (z.r + 0.15) ** 2) { boom = true; break; }
+        }
+        if (boom) { this.nades.splice(i, 1); this.explode(n, n.shell); if (this.state !== 'playing') return; } else { n.x = nx; n.y = ny; }
+        continue;
+      }
       if (this.sight(Math.floor(nx), Math.floor(n.y))) n.vx = -n.vx * 0.5; else n.x = nx;
       if (this.sight(Math.floor(n.x), Math.floor(ny))) n.vy = -n.vy * 0.5; else n.y = ny;
       n.vx *= 0.93; n.vy *= 0.93;
       if (n.t <= 0) { this.nades.splice(i, 1); this.explode(n); if (this.state !== 'playing') return; }
     }
   }
-  explode(n) {
-    const def = this.itemDefs.grenade || { damage: 80, radius: 3.2 };
+  explode(n, shellDef) {
+    const def = shellDef || this.itemDefs.grenade || { damage: 80, radius: 3.2 };
     const R = def.radius || 3.2, owner = this.players.get(n.owner);
     this.ev.push(['g', r2(n.x), r2(n.y), R]);
     const pvp = this.mode === 'pvp';
@@ -1009,8 +1036,8 @@ class Room {
     const wStr = JSON.stringify({ n: this.wave, of: this.waves, ph: this.phase === 'wave' ? 1 : 0, tm: Math.ceil(Math.max(0, this.timer)), left: this.queue + this.zombies.length });
     const restStr = JSON.stringify(rest).slice(1);
     const all = [...this.players.values()];
-    const tup = all.map((p) => JSON.stringify([p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 || p.dinv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0, Math.round(p.armor), p.dashT > 0 ? 1 : 0, p.boostT > 0 ? 1 : 0, p.nades]));
-    const hid = all.map((p) => JSON.stringify([p.id, 0, 0, 0, Math.max(0, Math.round(p.hp)), p.weapon, 0, 0, p.kills, 0, 0, p.deaths, 0, 0, 0, 0, 0, 0, 0, 1]));
+    const tup = all.map((p) => JSON.stringify([p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 || p.dinv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0, Math.round(p.armor), p.dashT > 0 ? 1 : 0, p.boostT > 0 ? 1 : 0, p.nades, 0, Math.round((p.heat || 0) * 100), p.lock > 0 ? 1 : 0]));
+    const hid = all.map((p) => JSON.stringify([p.id, 0, 0, 0, Math.max(0, Math.round(p.hp)), p.weapon, 0, 0, p.kills, 0, 0, p.deaths, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0]));
     const gStr = JSON.stringify(this.ground.map((g) => [g.id, r2(g.x), r2(g.y), g.item]));
     const open = this.mode === 'pvp' ? all.some((q) => !q.dead && this.inBush(q)) : false;
     const everyone = '[' + tup.join(',') + ']';

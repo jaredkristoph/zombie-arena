@@ -273,6 +273,37 @@ function testDeadTownConnected() {
   ok('Dead Town: every spawn and item is reachable (ramps, doors, tunnels)');
 }
 
+function testHeavyWeapons() {
+  const r = mkRoom({ mode: 'pvp', killLimit: 0, allowed: ['pistol', 'gatling', 'launcher', 'katana'], start: 'pistol' });
+  const a = fakeConn(1, 'A'), b = fakeConn(2, 'B');
+  const pa = r.join(a), pb = r.join(b);
+  r.startGame(); r.ground = [];
+  pa.inv = pb.inv = 0;
+  // gatling: fires fast, overheats after a long burst, jammed until the cooldown ends
+  pa.x = 10.5; pa.y = 19.5; pa.a = 0; pb.x = 30.5; pb.y = 30.5; pb.hp = 1e9; pa.weapon = 'gatling'; pa.ammo = 240; pa.shoot = true;
+  let shots = 0, jammedAt = -1;
+  for (let i = 0; i < 100 && jammedAt < 0; i++) { const a0 = pa.ammo; r.tick(); if (pa.ammo < a0) shots++; if (pa.lock > 0) jammedAt = i; }
+  assert.ok(jammedAt > 20 && shots >= 40 && shots <= 60, 'gatling jams after a long burst: ' + shots + ' shots');
+  const before = pa.ammo; for (let i = 0; i < 10; i++) r.tick();
+  assert.strictEqual(pa.ammo, before, 'no firing while jammed');
+  for (let i = 0; i < 70; i++) r.tick();
+  assert.ok(pa.lock === 0 && pa.ammo < before, 'cooled down, firing again');
+  // launcher: costs 6 ammo, slow reload, shell explodes on the first thing it meets
+  pa.shoot = false; pa.heat = 0; pa.lock = 0; pa.weapon = 'launcher'; pa.ammo = 100; pa.cd = 0; pa.x = 8.5; pa.y = 19.5; pa.a = 0; pb.x = 14.5; pb.y = 19.5; pb.hp = 100; pb.armor = 0;
+  r.fire(pa);
+  assert.strictEqual(pa.ammo, 94, 'launcher shell costs 6 ammo'); assert.ok(pa.cd > 1.5, 'long reload: ' + pa.cd.toFixed(2));
+  assert.strictEqual(r.nades.length, 1);
+  for (let i = 0; i < 20 && r.nades.length; i++) r.tick();
+  assert.ok(r.nades.length === 0 && pb.hp < 100, 'shell exploded on the enemy: hp ' + pb.hp);
+  // katana: walk twice as fast while it is wielded
+  const speed = (wid) => { pa.weapon = wid; pa.x = 20.5; pa.y = 19.5; pa.budget = 1; pa.shoot = false; r.onInput(pa, { seq: 1, dx: 1, dy: 0, dt: 100, sh: 0 }); return pa.x - 20.5; };
+  const walk = speed('pistol'), kat = speed('katana');
+  assert.ok(Math.abs(kat / walk - 1.5 / 0.98) < 0.05, 'katana = 150% speed: ' + (kat / walk).toFixed(2));
+  const gat = speed('gatling'), pis = speed('pistol'), snp = speed('sniper');
+  assert.ok(Math.abs(gat / pis - 0.82 / 0.98) < 0.03 && snp < pis && gat < snp, 'heavier guns are slower: pistol ' + pis.toFixed(2) + ' sniper ' + snp.toFixed(2) + ' gatling ' + gat.toFixed(2));
+  ok('gatling overheats + jams, grenade launcher (ammo cost, reload, explodes on contact), katana runs 2x, gun weight slows you');
+}
+
 function testMovementCollision() {
   const r = mkRoom({ waves: 0 });
   const a = fakeConn(1, 'Ann');
@@ -694,7 +725,7 @@ async function testNetwork() {
 }
 
 (async () => {
-  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testTerrainAndHeadshots(); testDoorsBushesGrenades(); testDeadTownConnected(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testTeams(); testArmorAndDamage(); testLook();
+  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testTerrainAndHeadshots(); testDoorsBushesGrenades(); testDeadTownConnected(); testHeavyWeapons(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testTeams(); testArmorAndDamage(); testLook();
   await testNetwork();
   console.log('\nAll ' + passed + ' checks passed');
   process.exit(0);

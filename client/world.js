@@ -393,7 +393,7 @@ export function createPreview(canvas, color, acc, fit = 0) {
   };
 }
 // turn > 0 eases the visible facing toward `a` (exponential, shortest way round); 0 = use `a` as is
-export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, protectedNow = false, melee = false, rolling = false) {
+export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, protectedNow = false, melee = false, rolling = false, weaponId = '') {
   v.root.position.set(x, settle(v, groundH(x, y), dt), y);
   if (turn > 0 && v.ang !== undefined && !v.wasDead) v.ang = lerpAngle(v.ang, a, 1 - Math.exp(-dt * turn));
   else v.ang = a;
@@ -403,6 +403,31 @@ export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, p
   v.model.visible = !dead && (rolling || v.rollTimer > 0 || !protectedNow || Math.floor(v.blink * 9) % 2 === 0); // spawn protection: blink
   if (gunColor !== v.gunColor) { v.gunColor = gunColor; v.gun.material = mat(gunColor); }
   v.swing = Math.max(0, (v.swing || 0) - dt * 5.5);
+  // the weapon in hand: a model per weapon (same shapes as on the floor); unknown/custom weapons keep the plain box
+  const hkey = weaponId + '|' + gunColor;
+  if (hkey !== v.hkey) {
+    v.hkey = hkey;
+    if (v.held) { v.heldParent.remove(v.held); v.held = null; }
+    if (GUN_MODELS[weaponId]) {
+      const inner = new THREE.Group();
+      GUN_MODELS[weaponId](inner, gunColor);
+      inner.position.set(melee ? 0.42 : 0.1, melee ? -0.5 : -0.5, 0); // the grip sits at the origin (the hand)
+      const held = new THREE.Group();
+      held.add(inner); held.scale.setScalar(melee ? 0.9 : HELD_SCALE);
+      v.heldParent = v.gun.parent || v.model; v.heldParent.add(held); v.held = held;
+    }
+    v.gun.visible = !v.held;
+  }
+  if (v.held) {
+    if (melee) {
+      const th = v.swing > 0 ? (v.swing - 0.5) * 2.6 : 0.3;
+      v.held.position.set(0.3 + 0.12 * Math.sin(th), 0.9, 0.3 + 0.12 * Math.cos(th));
+      v.held.rotation.y = th - Math.PI / 2;
+    } else {
+      v.held.position.set(0.3, 0.88, HAND_Z);
+      v.held.rotation.y = -Math.PI / 2; // (models are built pointing along +x; the character's front is +z)
+    }
+  }
   if (melee !== v.melee) { // swap between a gun and a sword model
     v.melee = melee;
     if (melee) v.gun.scale.set(0.07, 0.1, 1.05); else { v.gun.scale.set(0.1, 0.14, 0.62); v.gun.position.set(0.3, 0.86, 0.66); v.gun.rotation.y = 0; }
@@ -505,9 +530,56 @@ export function syncIds(kind, liveIds) {
 }
 
 // ---------- ground items & graves ----------
+// Floor models: one recognisable silhouette per weapon (barrel points along +x). Custom weapons use the generic shape in itemMesh.
+// where the muzzle ends up in front of the character: hand position + the model's barrel tip, scaled
+const HELD_SCALE = 0.85, HAND_Z = 0.4;
+const TIP = { pistol: 0.3, smg: 0.59, shotgun: 0.7, rifle: 0.85, sniper: 0.95, gatling: 0.69, launcher: 0.77 };
+export const muzzleForward = (id) => (TIP[id] ? HAND_Z - 0.1 * HELD_SCALE + TIP[id] * HELD_SCALE : 0.97);
+const METAL = '#3b3f47', STEEL = '#8d949e', WOOD = '#8a5a2b', BLACK = '#1d1f23';
+const GUN_MODELS = {
+  pistol(g, c) {
+    g.add(box(0.5, 0.13, 0.15, METAL, 0.05, 0.56, 0), box(0.5, 0.05, 0.17, c, 0.05, 0.64, 0), box(0.14, 0.3, 0.14, BLACK, -0.12, 0.4, 0), box(0.18, 0.03, 0.12, STEEL, 0.1, 0.46, 0));
+  },
+  smg(g, c) {
+    g.add(box(0.62, 0.17, 0.16, METAL, 0, 0.55, 0), box(0.3, 0.07, 0.06, STEEL, 0.44, 0.56, 0), box(0.12, 0.34, 0.1, BLACK, 0.12, 0.34, 0), box(0.1, 0.24, 0.13, BLACK, -0.12, 0.38, 0),
+      box(0.24, 0.05, 0.12, c, -0.4, 0.6, 0), box(0.62, 0.03, 0.18, c, 0, 0.65, 0));
+  },
+  shotgun(g, c) {
+    g.add(box(1.05, 0.09, 0.1, STEEL, 0.15, 0.58, 0), box(0.95, 0.07, 0.09, METAL, 0.12, 0.47, 0), box(0.3, 0.14, 0.15, WOOD, -0.5, 0.52, 0), box(0.32, 0.12, 0.15, c, 0.15, 0.5, 0),
+      box(0.4, 0.15, 0.13, WOOD, -0.28, 0.54, 0), box(0.07, 0.04, 0.04, c, 0.68, 0.64, 0));
+  },
+  rifle(g, c) {
+    g.add(box(0.74, 0.13, 0.12, METAL, 0, 0.55, 0), box(0.5, 0.05, 0.05, STEEL, 0.6, 0.56, 0), box(0.4, 0.16, 0.13, WOOD, -0.5, 0.52, 0), box(0.1, 0.26, 0.1, BLACK, 0.12, 0.38, 0),
+      box(0.22, 0.07, 0.07, c, 0.05, 0.69, 0), box(0.06, 0.05, 0.06, STEEL, 0.78, 0.62, 0));
+  },
+  sniper(g, c) {
+    g.add(box(1.35, 0.06, 0.06, STEEL, 0.25, 0.56, 0), box(0.6, 0.12, 0.11, METAL, -0.1, 0.55, 0), box(0.45, 0.17, 0.13, WOOD, -0.55, 0.5, 0),
+      box(0.46, 0.1, 0.1, BLACK, -0.02, 0.7, 0), box(0.07, 0.13, 0.13, c, 0.24, 0.7, 0), box(0.07, 0.13, 0.13, c, -0.28, 0.7, 0),
+      box(0.04, 0.2, 0.04, STEEL, 0.5, 0.45, 0.1), box(0.04, 0.2, 0.04, STEEL, 0.5, 0.45, -0.1), box(0.1, 0.05, 0.06, METAL, 0.9, 0.58, 0));
+  },
+  gatling(g, c) {
+    for (const z of [-0.09, 0, 0.09]) g.add(box(0.82, 0.07, 0.07, STEEL, 0.28, 0.56 + (z === 0 ? 0.06 : 0), z));
+    g.add(box(0.1, 0.26, 0.26, METAL, 0.62, 0.58, 0), box(0.1, 0.26, 0.26, METAL, 0.2, 0.58, 0), box(0.34, 0.24, 0.24, c, -0.2, 0.58, 0),
+      box(0.26, 0.2, 0.2, BLACK, -0.12, 0.36, 0.0), box(0.06, 0.06, 0.22, STEEL, -0.45, 0.58, 0), box(0.1, 0.24, 0.12, BLACK, -0.55, 0.42, 0));
+  },
+  launcher(g, c) {
+    g.add(box(0.9, 0.2, 0.2, c, 0.05, 0.58, 0), box(0.14, 0.27, 0.27, METAL, 0.55, 0.58, 0), box(0.12, 0.24, 0.24, METAL, -0.42, 0.58, 0), box(0.12, 0.3, 0.1, BLACK, -0.05, 0.37, 0),
+      box(0.1, 0.1, 0.1, '#e9c46a', 0.28, 0.76, 0), box(0.1, 0.18, 0.1, BLACK, 0.2, 0.42, 0), box(0.18, 0.12, 0.12, '#c1440e', 0.68, 0.58, 0));
+  },
+  sword(g, c) {
+    g.add(box(0.85, 0.05, 0.13, c, 0.2, 0.5, 0), box(0.08, 0.08, 0.38, '#8d6e3f', -0.27, 0.5, 0), box(0.3, 0.07, 0.08, '#5a3d1f', -0.45, 0.5, 0), box(0.08, 0.09, 0.09, '#e9c46a', -0.62, 0.5, 0));
+  },
+  katana(g, c) {
+    g.add(box(1.05, 0.035, 0.07, c, 0.3, 0.5, 0), box(0.05, 0.09, 0.2, '#e9c46a', -0.27, 0.5, 0), box(0.34, 0.06, 0.06, BLACK, -0.47, 0.5, 0), box(0.06, 0.04, 0.2, '#b11226', -0.62, 0.5, 0));
+  },
+  greatsword(g, c) {
+    g.add(box(1.2, 0.07, 0.24, c, 0.25, 0.5, 0), box(0.1, 0.1, 0.55, '#7a4b1a', -0.4, 0.5, 0), box(0.4, 0.09, 0.09, '#5a3d1f', -0.62, 0.5, 0), box(0.12, 0.13, 0.13, '#e9c46a', -0.85, 0.5, 0));
+  },
+};
 function itemMesh(def) {
   const g = new THREE.Group();
   const color = def ? def.color : '#ffffff';
+  if (def && def.type === 'weapon' && GUN_MODELS[def.id]) { GUN_MODELS[def.id](g, color); return g; }
   if (def && def.type === 'ammo') {
     g.add(box(0.56, 0.3, 0.4, '#5a4a2a', 0, 0.4, 0), box(0.6, 0.06, 0.44, '#3d3220', 0, 0.58, 0));
     for (const x of [-0.17, 0, 0.17]) g.add(box(0.1, 0.24, 0.1, color, x, 0.74, 0), box(0.1, 0.07, 0.1, '#c98a2b', x, 0.89, 0));

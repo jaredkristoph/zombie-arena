@@ -1,5 +1,5 @@
 // Zombie Arena client: lobby UI, networking, input + prediction, HUD, chat.
-import { $, clamp, lerp, lerpAngle, makeGrid, setDoorSolid, inBush, blocked, moveCircle, PLAYER_R, PLAYER_SPEED, STAM_MAX, DASH_TIME, DASH_MULT, KILL_BOOST, DASH_CD, sfx, unlockAudio, toggleMute, setVolume, setMuted } from './util.js';
+import { $, clamp, lerp, lerpAngle, makeGrid, weaponSpeed, setDoorSolid, inBush, blocked, moveCircle, PLAYER_R, PLAYER_SPEED, STAM_MAX, DASH_TIME, DASH_MULT, KILL_BOOST, DASH_CD, sfx, unlockAudio, toggleMute, setVolume, setMuted } from './util.js';
 import * as W3 from './world.js';
 
 const INTERP_MS = 90;
@@ -368,7 +368,7 @@ function onSnapshot(m) {
     if (sp[4] < S.lastHp && !me.dead) { $('hurt').style.opacity = 1; setTimeout(() => { $('hurt').style.opacity = 0; }, 120); W3.shake(0.35); }
     S.lastHp = sp[4];
     me.hp = sp[4]; me.weapon = sp[5]; me.dead = !!sp[6]; me.bag = sp[7]; me.kills = sp[8]; me.rs = sp[9] || 0;
-    me.armor = sp[15] || 0; me.nades = sp[18] || 0;
+    me.armor = sp[15] || 0; me.nades = sp[18] || 0; me.heat = sp[20] || 0; me.lock = sp[21] === 1;
     if (sp[17] === 1 && !S.boost && !me.dead) toast('Kill! +20% speed for 10s');
     S.boost = sp[17] === 1;
     if (sp[13] !== undefined) { if (sp[13] < S.stam - 12 || me.dead) S.stam = sp[13]; if (me.dead) { S.stam = STAM_MAX; S.dashT = 0; } } me.ammo = sp[12] === undefined ? 0 : sp[12];
@@ -380,7 +380,7 @@ function onSnapshot(m) {
     if (!me.dead) {
       for (const q of S.pending) moveCircle(S.grid, e, q.dx * PLAYER_SPEED * q.m * q.dt, q.dy * PLAYER_SPEED * q.m * q.dt, PLAYER_R);
       const a = S.acc;
-      if (a.dt > 0 && (a.dx || a.dy)) { const am = (a.sp ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1); moveCircle(S.grid, e, a.dx * PLAYER_SPEED * am * a.dt, a.dy * PLAYER_SPEED * am * a.dt, PLAYER_R); }
+      if (a.dt > 0 && (a.dx || a.dy)) { const am = (a.sp ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1) * wmult(); moveCircle(S.grid, e, a.dx * PLAYER_SPEED * am * a.dt, a.dy * PLAYER_SPEED * am * a.dt, PLAYER_R); }
       if (Math.hypot(e.x - me.x, e.y - me.y) > 2.5) { me.x = e.x; me.y = e.y; }
       else { me.x += (e.x - me.x) * 0.35; me.y += (e.y - me.y) * 0.35; }
     } else { me.x = sx; me.y = sy; }
@@ -408,8 +408,8 @@ function fx(ev) {
       const def = S.items[wid], col = def ? def.color : '#ffffff';
       const dx = Math.cos(a), dy = Math.sin(a);
       // the gun's muzzle: 0.97 ahead and 0.3 to the right of the body centre (see buildPlayerModel)
-      const tx = x + dx * 0.97 + dy * 0.3, ty = y + dy * 0.97 - dx * 0.3;
-      const far = len > 1.02; // (a point-blank hit ends right at the muzzle)
+      const mf = W3.muzzleForward(wid), tx = x + dx * mf + dy * 0.3, ty = y + dy * mf - dx * 0.3;
+      const far = len > mf + 0.05; // (a point-blank hit ends right at the muzzle)
       W3.tracer(tx, ty, far ? x + dx * len : tx + dx * 0.06, far ? y + dy * len : ty + dy * 0.06, col);
       W3.burst(tx + dx * 0.05, ty + dy * 0.05, 0.86, '#ffe27a', 4, 2.5, 0.18, 0.12);
       if (hit) W3.burst(x + dx * len, y + dy * len, 0.8, ev[7] ? '#ffd23f' : '#7bd24a', ev[7] ? 9 : 4, 3.2, ev[7] ? 0.2 : 0.14, 0.4);
@@ -426,6 +426,7 @@ function fx(ev) {
       break;
     }
     case 'g': W3.blast(ev[1], ev[2], ev[3]); sfx('kill', distVol(ev[1], ev[2])); sfx('shoot', distVol(ev[1], ev[2]) * 0.9); break;
+    case 'j': if (ev[1] === S.id) { toast('Gatling overheated! Cooling down...'); sfx('empty'); } break;
     case 't': sfx('dash', ev[1] === S.id ? 0.7 : 0.3); break;
     case 'D': if (ev[1] !== S.id) W3.startRoll(ev[1]); break; // (the 'dd' message normally got there first)
     case 'd': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.addBlood(v[1], v[2], 1.6, 9); if (v) W3.burst(v[1], v[2], 0.8, '#ff3b5c', 22, 5, 0.2, 0.8); sfx('death', ev[1] === S.id ? 1 : 0.5); if (ev[1] === S.id) W3.shake(0.8); break; }
@@ -529,10 +530,12 @@ function flushInput() {
   S.seq++;
   send({ t: 'in', seq: S.seq, dx: a.dx, dy: a.dy, dt: Math.round(dt * 1000), sh: a.sh, dh: a.dh ? 1 : 0, sp: a.sp ? 1 : 0, aa: Math.round(aim * 1000) / 1000 });
   a.dh = 0;
-  if (moving && dt > 0) S.pending.push({ seq: S.seq, dx: a.dx, dy: a.dy, dt, m: (a.sp ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1) });
+  if (moving && dt > 0) S.pending.push({ seq: S.seq, dx: a.dx, dy: a.dy, dt, m: (a.sp ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1) * wmult() });
   if (S.pending.length > 40) S.pending.shift();
   a.dt = 0;
 }
+// some weapons change how fast you walk (katana +50%, gatling -18%); the server uses the same number
+function wmult() { return weaponSpeed(S.items && S.items[S.me.weapon]); }
 function inputStep(dt) {
   const me = S.me;
   const typing = document.body.classList.contains('chat-open');
@@ -572,7 +575,7 @@ function inputStep(dt) {
   if (key !== S.lastKey) { flushInput(); S.lastKey = key; S.acc.dx = dx; S.acc.dy = dy; S.acc.sh = sh; S.acc.sp = rolling ? 1 : 0; if (startDash) { S.acc.dh = 1; flushInput(); } } // (a new dash is sent at once, not with the next 50ms batch)
   S.acc.dt += dt;
   const moveLen = rolling ? 1 : len;
-  if (moveLen > 0 && !me.dead) { const mu = (rolling ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1); moveCircle(S.grid, me, dx * PLAYER_SPEED * mu * dt, dy * PLAYER_SPEED * mu * dt, PLAYER_R); }
+  if (moveLen > 0 && !me.dead) { const mu = (rolling ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1) * wmult(); moveCircle(S.grid, me, dx * PLAYER_SPEED * mu * dt, dy * PLAYER_SPEED * mu * dt, PLAYER_R); }
   if (rolling) { S.dashT -= dt; if (S.dashT <= 0) S.dashT = 0; }
   if (S.acc.dt >= (rolling ? 0.017 : 0.05)) flushInput(); // (while rolling, send every frame so others see the burst at once)
   return moveLen > 0;
@@ -664,7 +667,7 @@ function frame(now) {
       v.lx = q[0]; v.ly = q[1]; x = q[0]; y = q[1]; a = q[2];
     }
     // our own aim is already smoothed in inputStep; other players are eased here so 20Hz snapshots never look steppy
-    W3.updatePlayer(v, x, y, a, !!p[6], gunCol, dt, mv, id === S.id ? 0 : 16, !!p[10], !!(def && def.melee), id === S.id ? S.dashT > 0 : p[16] === 1);
+    W3.updatePlayer(v, x, y, a, !!p[6], gunCol, dt, mv, id === S.id ? 0 : 16, !!p[10], !!(def && def.melee), id === S.id ? S.dashT > 0 : p[16] === 1, p[5]);
     if (id === S.id ? S.dashT > 0 : (p[16] === 1 || (v.rollTimer > 0))) { // dash: dust kicked up behind the roller, visible to everyone
       W3.burst(x - Math.cos(a) * 0.3, y - Math.sin(a) * 0.3, 0.15, '#d9d2c3', 2, 1.6, 0.2, 0.35);
     }
@@ -706,7 +709,7 @@ function frame(now) {
   if (!me.dead && !prompt) {
     let best = null, bd = S.pickR * S.pickR;
     for (const g of S.groundList) { if (S.items[g[3]] && S.items[g[3]].type === 'ammo') continue; const d = (g[1] - me.vx) ** 2 + (g[2] - me.vy) ** 2; if (d < bd) { bd = d; best = g; } }
-    if (best) { const def = S.items[best[3]]; if (def && def.type !== 'ammo') prompt = `[E] ${def.type === 'heal' || def.type === 'grenade' ? 'Pick up' : def.type === 'armor' ? 'Wear' : 'Equip'} ${def.name}`; }
+    if (best) { const def = S.items[best[3]]; if (def && def.type !== 'ammo') prompt = `[E] ${def.type === 'heal' || def.type === 'grenade' ? 'Pick up' : def.type === 'armor' ? 'Wear' : 'Equip'} ${def.name}${def.weight ? ` (${def.weight} kg, ${Math.round(weaponSpeed(def) * 100)}% speed)` : ''}`; }
   }
   if (!me.dead && !prompt && S.grid.doors.length) { // a door nearby
     let bi = -1, bd2 = 1.9 * 1.9;
@@ -761,9 +764,9 @@ function updateHud(me, myGrave) {
   $('stam-fill').classList.toggle('exh', S.stam < STAM_MAX - 1);
   setText('hp-text', String(Math.max(0, Math.round(me.hp))));
   const def = S.items[me.weapon] || S.items.pistol;
-  setText('weapon-name', def ? def.name : 'Pistol');
+  setText('weapon-name', def ? def.name + (def.weight ? ` \u00b7 ${def.weight} kg` : '') : 'Pistol');
   const melee = !!(def && def.melee);
-  setText('ammo-info', melee ? 'Melee - no ammo needed' : `Ammo ${me.ammo | 0}`);
+  setText('ammo-info', melee ? 'Melee - no ammo needed' : `Ammo ${me.ammo | 0}` + (def && def.heat ? (me.lock ? '  JAMMED - cooling' : `  Heat ${me.heat | 0}%`) : '') + (def && def.ammoCost ? `  (${def.ammoCost} per shell)` : ''));
   $('ammo-info').classList.toggle('low', !melee && (me.ammo | 0) <= 15);
   setText('bag-info', (me.bag ? `Heals x${me.bag}  [H]` : '') + (me.nades ? `${me.bag ? '  ' : ''}Grenades x${me.nades}  [F]` : ''));
   // players list
@@ -789,7 +792,7 @@ function updateHud(me, myGrave) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 
-const BUILD = 'b25'; // shown in the corner so you can check every window runs the same version
+const BUILD = 'b29'; // shown in the corner so you can check every window runs the same version
 // ---------- settings (gear button, top right; on the menu, in the room lobby and in game) ----------
 S.dashSim = new Map(); S.dashFade = new Map();
 globalThis.__za = S; S.W3 = W3; S.blockedAt = (x, y) => blocked(S.grid, x, y, PLAYER_R); // (debug / tests)
