@@ -43,6 +43,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .plist { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .chip { display: flex; align-items: center; gap: 8px; background: #1a1440; border: 2px solid var(--line); border-radius: 999px; padding: 6px 14px 6px 8px; font-weight: 700; }
 .chip i { width: 18px; height: 18px; border-radius: 50%; display: block; border: 2px solid #0006; }
+.chip.bot { border-style: dashed; }
+.chip button { all: unset; cursor: pointer; color: var(--pink); font-weight: 900; padding: 0 2px; line-height: 1; }
+.chip button:hover { color: #fff; }
+#r-bots { margin-bottom: 8px; } #r-bots button { padding: 8px 14px; }
+body.screen-game #c { cursor: crosshair; }
+#deadbox .rs { display: block; font-size: 64px; line-height: 1; color: var(--yellow); margin-top: 4px; }
+.pl .kd { color: var(--dim); font-weight: 600; }
+.pl.me { border-color: var(--yellow); } .pl.prot span:first-child::after { content: " \1F6E1"; }
 .foot { margin-top: 6px; font-size: 13px; } .foot a { color: var(--blue); }
 
 /* game over */
@@ -105,3 +113,12 @@ body.screen-game:not(.chat-open) #chatlog { overflow: hidden; }
 body.screen-menu #chatlog, body.screen-room #chatlog { max-height: 140px; }
 body.screen-over #chatinput { display: block; }
 @media (max-width: 700px) { #help { display: none; } #hp-bar { width: 160px; } }
+
+/* character preview + head accessory picker */
+.char-slot { display: flex; justify-content: center; }
+.charbox { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 6px 0 4px; }
+.char-view { display: flex; align-items: center; gap: 8px; }
+.char-view canvas { width: 160px; height: 192px; background: radial-gradient(ellipse at 50% 85%, #3a2f7a, #1a1440 70%); border: 2px solid var(--line); border-radius: 14px; }
+.arrow { width: 40px; height: 56px; padding: 0; font-size: 18px; border-radius: 12px; }
+.acc-label { font-weight: 700; } .acc-label b { color: var(--yellow); }
+#ammo-info { margin-left: 12px; color: var(--yellow); } #ammo-info.low { color: var(--pink); }

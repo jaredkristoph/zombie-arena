@@ -21,11 +21,11 @@
     <div id="hud-players"></div>
     <div id="hud-bottom">
       <div id="hp-wrap"><div id="hp-bar"><div id="hp-fill"></div></div><div id="hp-text">100</div></div>
-      <div id="gear"><span id="weapon-name">Pistol</span><span id="bag-info"></span></div>
+      <div id="gear"><span id="weapon-name">Pistol</span><span id="ammo-info"></span><span id="bag-info"></span></div>
     </div>
     <div id="prompt"></div>
     <div id="deadbox"></div>
-    <div id="help">WASD / Arrows move &middot; SPACE shoot &middot; E equip &middot; Q drop gun &middot; H heal &middot; G drop heal &middot; ENTER chat &middot; M mute</div>
+    <div id="help">WASD / Arrows move &middot; MOUSE aim &middot; SPACE / CLICK shoot (limited ammo - grab ammo packs) &middot; E equip &middot; Q drop gun &middot; H heal &middot; G drop heal &middot; ENTER chat &middot; M mute</div>
     <div id="ping"></div>
     <div id="hurt"></div>
     <div id="toast"></div>
@@ -38,6 +38,17 @@
       <div class="card">
         <h2>Your name</h2>
         <input id="name" maxlength="14" placeholder="Survivor" autocomplete="off">
+        <div id="slot-menu" class="char-slot">
+        <div id="char-box" class="charbox">
+          <div class="char-view">
+            <button id="acc-prev" class="arrow" title="Previous head accessory (Left arrow key)">&#9664;</button>
+            <canvas id="preview" width="200" height="240"></canvas>
+            <button id="acc-next" class="arrow" title="Next head accessory (Right arrow key)">&#9654;</button>
+          </div>
+          <div class="acc-label">Head: <b id="acc-name">None</b></div>
+          <div class="tiny">&larr; / &rarr; to change your look</div>
+        </div>
+        </div>
         <h2>Open rooms</h2>
         <div id="rooms" class="list"><div class="empty">Connecting...</div></div>
       </div>
@@ -45,12 +56,19 @@
         <h2>Create a room</h2>
         <label>Room name <input id="c-name" maxlength="22" placeholder="My room" autocomplete="off"></label>
         <label>Map <select id="c-map"></select></label>
+        <label>Mode
+          <select id="c-mode">
+            <option value="coop" selected>Co-op survival (vs zombies)</option>
+            <option value="pvp">PvP deathmatch (vs players &amp; bots)</option>
+          </select>
+        </label>
         <div class="row">
-          <label>Waves <input id="c-waves" type="number" min="0" max="99" value="10"></label>
+          <label id="c-waves-l">Waves <input id="c-waves" type="number" min="0" max="99" value="10"></label>
+          <label id="c-kills-l" style="display:none">Kills to win <input id="c-kills" type="number" min="0" max="200" value="20"></label>
           <label>Max players <input id="c-max" type="number" min="1" max="8" value="4"></label>
         </div>
-        <label class="tiny">0 waves = endless survival</label>
-        <label>Difficulty
+        <label class="tiny" id="c-hint">0 waves = endless survival</label>
+        <label><span id="c-diff-l">Difficulty</span>
           <select id="c-diff">
             <option value="easy">Easy</option>
             <option value="normal" selected>Normal</option>
@@ -70,7 +88,11 @@
     <div class="card wide">
       <h2 id="r-title">Room</h2>
       <div id="r-info" class="tiny"></div>
+      <div id="slot-room" class="char-slot"></div>
       <div id="r-players" class="plist"></div>
+      <div id="r-bots" class="row" style="display:none">
+        <button id="btn-addbot" class="ghost">+ Add bot</button>
+      </div>
       <div class="row">
         <button id="btn-start" class="big">Start game</button>
         <button id="btn-leave" class="ghost">Leave</button>

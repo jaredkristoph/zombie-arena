@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { Room, TICK_HZ, DIFF } = require('./game');
+const { Room, TICK_HZ, DIFF, ACC_COUNT } = require('./game');
 const { DEFAULT_ITEMS, buildDefaultMaps, sanitizeMap, sanitizeItem, cleanName } = require('./content');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -27,6 +27,7 @@ function loadStore() {
   } catch (e) { /* first run or corrupt: fall through to defaults */ }
   if (!store.maps.length) store.maps = buildDefaultMaps();
   if (!store.items.some((i) => i.id === 'pistol')) store.items.unshift(DEFAULT_ITEMS[0]);
+  if (!store.items.some((i) => i.type === 'ammo')) store.items.push({ ...DEFAULT_ITEMS.find((i) => i.type === 'ammo') });
   if (store.items.length < 2) store.items = DEFAULT_ITEMS.map((i) => ({ ...i }));
 }
 function saveStore() {
@@ -207,6 +208,7 @@ function onMessage(c, m) {
     case 'hello': {
       c.name = cleanName(m.name, 14) || 'Survivor' + (100 + (c.id % 900));
       c.named = true;
+      c.acc = Math.max(0, Math.min(ACC_COUNT - 1, Math.round(Number(m.acc)) || 0));
       c.send({ t: 'hello_ok', id: c.id, name: c.name, maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;
@@ -221,6 +223,8 @@ function onMessage(c, m) {
         waves: Math.min(99, Math.max(0, Math.round(Number(m.waves)))) || 0,
         difficulty: DIFF[m.difficulty] ? m.difficulty : 'normal',
         maxPlayers: Math.min(8, Math.max(1, Math.round(Number(m.max)) || 4)),
+        mode: m.mode === 'pvp' ? 'pvp' : 'coop',
+        killLimit: Math.min(200, Math.max(0, Math.round(Number(m.kills)))) || 0,
       });
       rooms.set(room.id, room);
       room.join(c);
@@ -236,6 +240,18 @@ function onMessage(c, m) {
       pushRooms();
       return;
     }
+    case 'acc': {
+      c.acc = Math.max(0, Math.min(ACC_COUNT - 1, Math.round(Number(m.v)) || 0));
+      if (c.player && c.room) { c.player.acc = c.acc; if (c.room.state === 'lobby') c.room.sendRoom(); }
+      return;
+    }
+    case 'addbot': {
+      if (!c.room || !c.player) return;
+      const err = c.room.addBot(c.id);
+      if (err) c.send({ t: 'toast', text: err }); else pushRooms();
+      return;
+    }
+    case 'rmbot': if (c.room && c.player) { c.room.removeBot(c.id, Number(m.id)); pushRooms(); } return;
     case 'leave': leaveRoom(c); c.send({ t: 'left', rooms: roomList() }); c.send({ t: 'chatlog', msgs: lobbyChat }); return;
     case 'start': {
       if (c.room && c.player && c.room.hostId === c.id) { c.room.startGame(); pushRooms(); }

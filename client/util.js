@@ -79,6 +79,7 @@ export function sfx(kind, vol = 1) {
     case 'heal': tone(520, 1040, 0.25, 'sine', 0.16 * vol); break;
     case 'revive': tone(400, 1200, 0.45, 'sine', 0.2 * vol); tone(600, 1500, 0.5, 'triangle', 0.1 * vol); break;
     case 'wave': tone(110, 80, 0.6, 'sawtooth', 0.14 * vol); break;
+    case 'empty': tone(160, 110, 0.05, 'square', 0.07 * vol); break;
     case 'chat': tone(900, 1200, 0.05, 'square', 0.04 * vol); break;
     default:
   }

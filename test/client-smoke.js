@@ -28,8 +28,11 @@ class Mat { constructor(o = {}) { Object.assign(this, o); this.color = new Color
 export class MeshBasicMaterial extends Mat {} export class MeshLambertMaterial extends Mat {}
 export class Color { constructor(c) { this.c = c; } set(c) { this.c = c; } multiplyScalar() { return this; } getHexString() { return '808080'; } }
 export class Fog {} export class HemisphereLight extends Obj {} export class DirectionalLight extends Obj {}
-export class PerspectiveCamera extends Obj { updateProjectionMatrix() {} }
+export class PerspectiveCamera extends Obj { updateProjectionMatrix() {} updateMatrixWorld() {} }
 export class WebGLRenderer { constructor(o) { if (!o.canvas) throw new Error('no canvas'); this.frames = 0; } setPixelRatio() {} setSize() {} render() { this.frames++; globalThis.__frames = this.frames; } }
+export class Vector2 { constructor() { this.x = 0; this.y = 0; } set(x, y) { this.x = x; this.y = y; return this; } }
+export class Plane { constructor() {} }
+export class Raycaster { setFromCamera() {} get ray() { return { intersectPlane(p, out) { out.x = 20; out.z = 20; return out; } }; } }
 export class Vector3 { constructor() { this.x = 0; this.y = 0; this.z = 0; } set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } project() { this.z = 0.5; return this; } }
 export class CanvasTexture { constructor() { this.repeat = vec(); } dispose() {} }
 export const RepeatWrapping = 1, SRGBColorSpace = 'srgb', DoubleSide = 2;
@@ -96,6 +99,15 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   // lobby
   await until(() => $('c-map').children.length === 2);
   assert.ok(body.classList.contains('screen-menu'));
+  // character preview + head accessory picker (buttons and arrow keys)
+  assert.strictEqual($('acc-name').textContent, 'None');
+  $('acc-next').onclick();
+  assert.strictEqual($('acc-name').textContent, 'Cap');
+  fire('keydown', { code: 'ArrowRight' });
+  assert.strictEqual($('acc-name').textContent, 'Cowboy Hat');
+  fire('keydown', { code: 'ArrowLeft' }); fire('keydown', { code: 'ArrowLeft' }); fire('keydown', { code: 'ArrowLeft' });
+  assert.strictEqual($('acc-name').textContent, 'Wizard Hat', 'wraps around');
+  console.log('  ok  menu: character preview, accessory buttons + arrow keys');
   $('name').value = 'Tester';
   $('c-name').value = 'Smoke room'; $('c-waves').value = '3'; $('c-max').value = '4'; $('c-diff').value = 'easy';
   $('btn-create').onclick();
@@ -196,6 +208,44 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   assert.ok(/GAME OVER/.test($('over-title').textContent));
   await sleep(100);
   console.log('  ok  game over screen');
+
+  // ---- pvp: create room via the UI, add a bot, mouse aim turns smoothly, death countdown + respawn ----
+  room.backToLobby();
+  await until(() => body.classList.contains('screen-room'));
+  $('btn-leave').onclick();
+  await until(() => body.classList.contains('screen-menu'));
+  $('c-mode').value = 'pvp'; $('c-mode').onchange();
+  assert.ok($('c-waves-l').style.display === 'none' && $('c-kills-l').style.display === '', 'pvp form shows kill limit');
+  $('c-name').value = 'PvP room'; $('c-kills').value = '5'; $('c-max').value = '4';
+  $('btn-create').onclick();
+  await until(() => body.classList.contains('screen-room'));
+  assert.strictEqual($('r-bots').style.display, 'flex', 'host sees the add-bot button');
+  $('btn-addbot').onclick();
+  await until(() => $('r-players').children.length === 2);
+  assert.ok($('r-players').children.some((c) => c.className.includes('bot')), 'bot chip shown');
+  $('btn-start').onclick();
+  await until(() => body.classList.contains('screen-game'));
+  const prm = [...rooms.values()].find((r) => r.mode === 'pvp');
+  const pme = [...prm.players.values()].find((p) => p.name === 'Tester');
+  const pbot = [...prm.players.values()].find((p) => p.bot);
+  pbot.hp = 1e9; pbot.ai.path = []; pbot.x = 2.5; pbot.y = 2.5;
+  await stepFrames(400);
+  assert.ok(/DEATHMATCH/.test($('wave-title').textContent), 'pvp hud title');
+  const a0 = pme.a;
+  fire('mousemove', { clientX: 300, clientY: 200 }); fire('mousemove', { clientX: 900, clientY: 100 });
+  await stepFrames(60);
+  const mid = pme.a;
+  await stepFrames(800);
+  const want = Math.atan2(20 - pme.y, 20 - pme.x);
+  assert.ok(Math.abs(Math.atan2(Math.sin(pme.a - want), Math.cos(pme.a - want))) < 0.1, 'aim converges on the cursor: ' + pme.a + ' vs ' + want);
+  assert.ok(Math.abs(Math.atan2(Math.sin(mid - want), Math.cos(mid - want))) > 0.001 || Math.abs(a0 - want) < 0.05, 'aim eased rather than snapped');
+  prm.die(pme, pbot);
+  await stepFrames(400);
+  assert.ok(/KILLED/.test($('deadbox').innerHTML) && /class="rs">(9|10)</.test($('deadbox').innerHTML), 'respawn countdown shown: ' + $('deadbox').innerHTML);
+  pme.rs = 0.05;
+  await stepFrames(500);
+  assert.ok(!pme.dead && $('deadbox').style.display === 'none', 'respawned and overlay hidden');
+  console.log('  ok  pvp: UI create + bots, mouse aim eases to cursor, 10s respawn countdown');
 
   assert.strictEqual(errors.length, 0, 'no uncaught errors');
   console.log('\nClient smoke test passed');

@@ -163,9 +163,10 @@
 
   // ---------- items ----------
   function syncType() {
-    const heal = $('i-type').value === 'heal';
-    document.querySelectorAll('.w').forEach((e) => { e.style.display = heal ? 'none' : 'block'; });
-    document.querySelectorAll('.h').forEach((e) => { e.style.display = heal ? 'block' : 'none'; });
+    const ty = $('i-type').value;
+    document.querySelectorAll('.w').forEach((e) => { e.style.display = ty === 'weapon' ? 'block' : 'none'; });
+    document.querySelectorAll('.h').forEach((e) => { e.style.display = ty === 'heal' ? 'block' : 'none'; });
+    document.querySelectorAll('.a').forEach((e) => { e.style.display = ty === 'ammo' ? 'block' : 'none'; });
   }
   $('i-type').onchange = syncType;
   let editId = null;
@@ -176,7 +177,7 @@
       const n = document.createElement('td'); const d = document.createElement('span'); d.className = 'dot'; d.style.background = i.color;
       n.append(d, document.createTextNode(i.name));
       const s = document.createElement('td');
-      s.textContent = i.type === 'heal' ? 'Heals ' + i.heal : `${i.damage} dmg x${i.pellets} · ${i.rate}/s · range ${i.range}` + (i.pierce ? ' · pierce ' + i.pierce : '');
+      s.textContent = i.type === 'heal' ? 'Heals ' + i.heal : i.type === 'ammo' ? '+' + i.amount + ' bullets (shared by all guns)' : `${i.damage} dmg x${i.pellets} · ${i.rate}/s · range ${i.range}` + (i.pierce ? ' · pierce ' + i.pierce : '');
       const a = document.createElement('td'); a.style.textAlign = 'right';
       const e = document.createElement('button'); e.textContent = 'Edit'; e.className = 'ghost'; e.style.padding = '4px 10px';
       e.onclick = () => editItem(i);
@@ -192,14 +193,15 @@
   function editItem(i) {
     editId = i.id; $('if-title').textContent = 'Edit item: ' + i.name;
     $('i-name').value = i.name; $('i-type').value = i.type; $('i-color').value = i.color;
-    for (const k of ['damage', 'rate', 'range', 'pellets', 'spread', 'pierce', 'heal']) if (i[k] !== undefined) $('i-' + k).value = i[k];
+    for (const k of ['damage', 'rate', 'range', 'pellets', 'spread', 'pierce', 'heal', 'amount']) if (i[k] !== undefined) $('i-' + k).value = i[k];
     syncType();
   }
   $('i-clear').onclick = () => { editId = null; $('if-title').textContent = 'New item'; $('i-name').value = ''; $('i-type').value = 'weapon'; syncType(); say('i-msg', '', true); };
   $('i-save').onclick = async () => {
-    const heal = $('i-type').value === 'heal';
+    const ty = $('i-type').value, heal = ty === 'heal';
     const body = { id: editId || undefined, name: $('i-name').value, type: $('i-type').value, color: $('i-color').value };
     if (heal) body.heal = Number($('i-heal').value);
+    else if (ty === 'ammo') body.amount = Number($('i-amount').value);
     else for (const k of ['damage', 'rate', 'range', 'pellets', 'spread', 'pierce']) body[k] = Number($('i-' + k).value);
     try { await api('PUT', '/api/admin/items', body, true); await reload(); $('i-clear').onclick(); say('i-msg', 'Item saved. It can now drop from zombies and appear on item spawns.', true); } catch (e) { say('i-msg', e.message); }
   };

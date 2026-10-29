@@ -9,6 +9,7 @@ const DEFAULT_ITEMS = [
   { id: 'sniper', name: 'Sniper', type: 'weapon', builtin: true, damage: 130, rate: 0.8, range: 32, pellets: 1, spread: 0, pierce: 3, color: '#9b5de5' },
   { id: 'bandage', name: 'Bandage', type: 'heal', builtin: true, heal: 25, color: '#f1f1f1' },
   { id: 'medkit', name: 'Medkit', type: 'heal', builtin: true, heal: 60, color: '#ff4d4d' },
+  { id: 'ammo', name: 'Ammo Pack', type: 'ammo', builtin: true, amount: 40, color: '#ffd23f' },
 ];
 
 function mulberry32(a) {
@@ -94,9 +95,10 @@ function sanitizeItem(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('Bad item');
   const name = cleanName(raw.name, 20);
   if (!name) throw new Error('Item needs a name');
-  const type = raw.type === 'heal' ? 'heal' : 'weapon';
+  const type = raw.type === 'heal' ? 'heal' : raw.type === 'ammo' ? 'ammo' : 'weapon';
   const id = validId(raw.id) ? raw.id : (slug(name) || 'item') + '-' + Math.random().toString(36).slice(2, 6);
   const color = /^#[0-9a-f]{6}$/i.test(raw.color || '') ? raw.color : '#ffffff';
+  if (type === 'ammo') return { id, name, type, amount: Math.round(num(raw.amount, 1, 240, 40)), color };
   if (type === 'heal') return { id, name, type, heal: Math.round(num(raw.heal, 1, 200, 30)), color };
   return {
     id, name, type, color,

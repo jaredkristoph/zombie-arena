@@ -153,6 +153,133 @@ function testMovementCollision() {
 }
 
 // ---------- integration over real sockets ----------
+
+// ---------- pvp ----------
+function testPvp() {
+  const r = mkRoom({ mode: 'pvp', killLimit: 3, difficulty: 'hard' });
+  const a = fakeConn(1, 'Ann'), b = fakeConn(2, 'Bob');
+  const pa = r.join(a), pb = r.join(b);
+  // bots: host only, lobby only, respects the player cap
+  assert.ok(r.addBot(2), 'non-host cannot add bots');
+  assert.strictEqual(r.addBot(1), null);
+  assert.strictEqual(r.addBot(1), null);
+  assert.ok(r.addBot(1), 'room full at 4 players');
+  assert.strictEqual(r.botCount(), 2);
+  const bot = [...r.players.values()].find((p) => p.bot);
+  r.removeBot(1, bot.id);
+  assert.strictEqual(r.botCount(), 1);
+  assert.ok(mkRoom({ mode: 'coop' }).addBot(1), 'no bots in co-op rooms');
+  r.startGame();
+  assert.ok(!r.addBot(1) === false, 'cannot add bots mid-game');
+  assert.strictEqual(r.zombies.length, 0);
+  pa.hp = pb.hp = 1e9; // keep the (hard) bot from interfering with the setup below
+  for (let i = 0; i < 400; i++) r.tick();
+  assert.strictEqual(r.zombies.length, 0, 'no zombies in pvp');
+  pa.hp = pb.hp = 100; pa.dead = pb.dead = false;
+
+  // shooting a player hurts them; kills respawn after 10s with protection
+  const bt = [...r.players.values()].find((p) => p.bot);
+  bt.x = 2.5; bt.y = 2.5; bt.shoot = false; bt.ai.path = []; bt.hp = 9999; // park the bot out of the way
+  pa.x = 17.5; pa.y = 19.5; pb.x = 21.5; pb.y = 19.5; pa.a = 0; pa.weapon = 'rifle'; pa.inv = 0; pb.inv = 0;
+  r.fire(pa);
+  assert.ok(pb.hp < 100 && !pb.dead, 'hit player lost hp');
+  for (let i = 0; i < 6; i++) { pa.cd = 0; r.fire(pa); }
+  assert.ok(pb.dead && pa.kills === 1 && pb.deaths === 1, 'kill credited');
+  assert.ok(r.graves.length === 0, 'no graves in pvp');
+  assert.ok(a.msgs.some((m) => m.t === 'chat' && /Ann eliminated Bob/.test(m.text)), 'kill feed');
+  const diedAt = r.tickN;
+  while (pb.dead && r.tickN - diedAt < 400) { pa.hp = 100; bt.hp = 9999; r.tick(); }
+  const secs = (r.tickN - diedAt) * DT;
+  assert.ok(!pb.dead && secs >= 9.9 && secs <= 10.2, 'respawned after ~10s, took ' + secs);
+  assert.ok(pb.hp === 100 && pb.inv > 0 && pb.weapon === 'pistol', 'full hp, shielded, pistol');
+  pa.x = 17.5; pa.y = 19.5; pb.x = 21.5; pb.y = 19.5; pa.cd = 0; pa.weapon = 'rifle';
+  r.fire(pa);
+  assert.strictEqual(pb.hp, 100, 'spawn protection blocks damage');
+  pb.inv = 0;
+
+  // kill limit ends the match
+  pb.x = 21.5; pb.y = 19.5; pb.hp = 100; pb.dead = false;
+  for (let k = 0; k < 5 && r.state === 'playing'; k++) {
+    pb.dead = false; pb.hp = 20; pb.inv = 0; pa.cd = 0; pa.x = 17.5; pa.y = 19.5; pa.a = 0; pb.x = 21.5; pb.y = 19.5;
+    r.fire(pa);
+  }
+  assert.strictEqual(r.state, 'over', 'kill limit reached');
+  const over = a.msgs.find((m) => m.t === 'over');
+  assert.ok(over && over.result === 'pvp' && over.winnerId === 1 && over.stats.length === 3, 'pvp over message');
+  ok('pvp: bots (host/lobby/cap), damage, kill feed, 10s respawn + shield, kill limit');
+}
+
+function testBotsFight() {
+  // humans-less sim: 4 bots on the biggest default map should move, hunt each other and score kills without crashing
+  for (const map of buildDefaultMaps()) {
+    const r = mkRoom({ mode: 'pvp', killLimit: 0, difficulty: 'nightmare', map, maxPlayers: 6 });
+    const h = fakeConn(1, 'Host');
+    const ph = r.join(h);
+    for (let i = 0; i < 4; i++) assert.strictEqual(r.addBot(1), null);
+    r.startGame();
+    ph.hp = 1e9; // the human just stands there
+    const start = new Map([...r.players.values()].filter((p) => p.bot).map((p) => [p.id, [p.x, p.y]]));
+    for (let i = 0; i < 20 * 120; i++) { ph.hp = 1e9; ph.dead = false; r.tick(); }
+    const bots = [...r.players.values()].filter((p) => p.bot);
+    const moved = bots.filter((p) => Math.hypot(p.x - start.get(p.id)[0], p.y - start.get(p.id)[1]) > 3 || p.kills + p.deaths > 0);
+    const kills = bots.reduce((n, p) => n + p.kills, 0);
+    assert.ok(moved.length >= 3, map.name + ': bots move around');
+    assert.ok(kills >= 3, map.name + ': bots shoot each other (' + kills + ' kills in 2 min)');
+    for (const p of r.players.values()) assert.ok(!r.blocked(p.x, p.y, 0.3) , map.name + ': nobody stuck inside a wall');
+  }
+  // closing the room: only bots left
+  const r = mkRoom({ mode: 'pvp' });
+  const c = fakeConn(1, 'Solo');
+  r.join(c); r.addBot(1);
+  r.leave(c);
+  assert.strictEqual(r.players.size, 0, 'room empties when the last human leaves');
+  ok('pvp: bots path-find, fight and score on every default map; room closes when humans leave');
+}
+
+function testAmmo() {
+  const r = mkRoom({ waves: 3 });
+  const a = fakeConn(1, 'Ann');
+  const p = r.join(a);
+  r.startGame(); r.timer = 99999;
+  p.x = 19.5; p.y = 19.5; p.a = 0; r.ground = [];
+  assert.strictEqual(p.ammo, 90, 'starts with ammo');
+  r.fire(p); r.fire(p);
+  assert.strictEqual(p.ammo, 88, 'each shot costs one bullet (any gun)');
+  p.weapon = 'shotgun'; p.cd = 0; r.fire(p);
+  assert.strictEqual(p.ammo, 87, 'a shotgun blast is one bullet too');
+  p.ammo = 0; p.cd = 0; r.ev = [];
+  r.fire(p);
+  assert.strictEqual(p.ammo, 0);
+  assert.ok(!r.ev.some((e) => e[0] === 's') && r.ev.some((e) => e[0] === 'e'), 'no shot when empty, click event instead');
+  // walking over an ammo pack picks it up for every gun
+  r.addGround(p.x + 0.5, p.y, 'ammo', 0);
+  r.tick();
+  assert.strictEqual(p.ammo, 40, 'ammo pack adds 40');
+  assert.ok(!r.ground.some((g) => g.item === 'ammo'), 'pack consumed');
+  p.ammo = 235; r.addGround(p.x, p.y, 'ammo', 0); r.tick();
+  assert.strictEqual(p.ammo, 240, 'capped at 240');
+  p.ammo = 240; r.addGround(p.x, p.y, 'ammo', 0); r.tick();
+  assert.ok(r.ground.some((g) => g.item === 'ammo'), 'full: pack stays on the ground');
+  p.ammo = 10; r.act(p, 'equip');
+  assert.strictEqual(p.ammo, 50, 'E also picks ammo up');
+  // snapshot carries ammo
+  const snap = a.msgs.slice().reverse().find((m) => m.t === 's');
+  assert.ok(snap && snap.p[0].length >= 13, 'snapshot has ammo field');
+  ok('ammo: shared by all guns, limited, packs auto/E pickup, cap, snapshot field');
+}
+function testAccessories() {
+  const r = mkRoom({ mode: 'pvp' });
+  const c = fakeConn(1, 'Ann'); c.acc = 5;
+  const p = r.join(c);
+  assert.strictEqual(p.acc, 5, 'accessory comes from the connection');
+  r.sendRoom();
+  const room = c.msgs.slice().reverse().find((m) => m.t === 'room');
+  assert.strictEqual(room.players[0].acc, 5, 'room list carries accessory');
+  r.addBot(1);
+  assert.ok([...r.players.values()].find((q) => q.bot).acc >= 0, 'bots get an accessory');
+  ok('accessories: stored per player and broadcast with the room');
+}
+
 function api(port, method, path, body, key) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
@@ -264,7 +391,7 @@ async function testNetwork() {
 }
 
 (async () => {
-  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision();
+  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testPvp(); testBotsFight(); testAmmo(); testAccessories();
   await testNetwork();
   console.log('\nAll ' + passed + ' checks passed');
   process.exit(0);

@@ -140,10 +140,30 @@ function clearMap() {
 }
 
 // ---------- characters ----------
-export function ensurePlayer(id, color) {
-  let v = players.get(id);
-  if (v) return v;
-  const root = new THREE.Group(), model = new THREE.Group();
+// Head accessories. Keep ACC_NAMES in the same order/length as ACC_COUNT in server/game.js.
+export const ACC_NAMES = ['None', 'Cap', 'Cowboy Hat', 'Top Hat', 'Crown', 'Headband', 'Bunny Ears', 'Devil Horns', 'Halo', 'Army Helmet', 'Mohawk', 'Antenna', 'Pirate Hat', 'Wizard Hat'];
+function accessoryParts(i, color) {
+  const b = box;
+  switch (i) {
+    case 1: return [b(0.52, 0.16, 0.52, color, 0, 1.68, 0), b(0.5, 0.04, 0.24, darken(color, 0.75), 0, 1.62, 0.36)];
+    case 2: return [b(0.95, 0.05, 0.95, '#8b5a2b', 0, 1.66, 0), b(0.5, 0.24, 0.5, '#a0693a', 0, 1.79, 0), b(0.52, 0.06, 0.52, '#4a2c12', 0, 1.71, 0)];
+    case 3: return [b(0.72, 0.05, 0.72, '#151515', 0, 1.66, 0), b(0.44, 0.48, 0.44, '#151515', 0, 1.92, 0), b(0.46, 0.08, 0.46, '#c0392b', 0, 1.74, 0)];
+    case 4: return [b(0.5, 0.1, 0.5, '#ffd23f', 0, 1.68, 0), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([x, z]) => b(0.1, 0.17, 0.1, '#ffd23f', x * 0.2, 1.8, z * 0.2)), b(0.09, 0.09, 0.05, '#e63946', 0, 1.69, 0.26)];
+    case 5: return [b(0.5, 0.08, 0.5, '#ff4d6d', 0, 1.47, 0), b(0.1, 0.14, 0.1, '#ff4d6d', 0.27, 1.45, -0.12), b(0.1, 0.14, 0.1, '#ff4d6d', 0.27, 1.45, 0.02)];
+    case 6: return [-1, 1].flatMap((x) => [b(0.13, 0.55, 0.1, '#f8f9fa', x * 0.14, 1.98, 0), b(0.06, 0.4, 0.11, '#ffb3c6', x * 0.14, 1.96, 0.01)]);
+    case 7: return [-1, 1].flatMap((x) => [b(0.1, 0.22, 0.1, '#d00000', x * 0.17, 1.76, 0), b(0.07, 0.14, 0.07, '#ff4d4d', x * 0.21, 1.92, 0)]);
+    case 8: return [b(0.56, 0.05, 0.07, '#ffe066', 0, 2.0, 0.25), b(0.56, 0.05, 0.07, '#ffe066', 0, 2.0, -0.25), b(0.07, 0.05, 0.56, '#ffe066', 0.25, 2.0, 0), b(0.07, 0.05, 0.56, '#ffe066', -0.25, 2.0, 0)];
+    case 9: return [b(0.56, 0.22, 0.56, '#4b5d3a', 0, 1.7, 0), b(0.62, 0.05, 0.62, '#3b4a2e', 0, 1.6, 0), b(0.2, 0.08, 0.04, '#6b7f52', 0, 1.74, 0.29)];
+    case 10: return [b(0.1, 0.24, 0.52, '#f72585', 0, 1.77, 0), b(0.1, 0.14, 0.3, '#ff7aa8', 0, 1.9, -0.05)];
+    case 11: return [b(0.04, 0.32, 0.04, '#aaaaaa', 0, 1.82, 0), b(0.13, 0.13, 0.13, '#3ae374', 0, 2.03, 0)];
+    case 12: return [b(0.74, 0.14, 0.36, '#151515', 0, 1.7, 0), b(0.48, 0.12, 0.3, '#151515', 0, 1.8, 0), b(0.1, 0.1, 0.04, '#ffffff', 0, 1.7, 0.19)];
+    case 13: return [b(0.72, 0.05, 0.72, '#5b2a86', 0, 1.65, 0), b(0.46, 0.2, 0.46, '#6c34a0', 0, 1.77, 0), b(0.32, 0.2, 0.32, '#6c34a0', 0, 1.97, 0), b(0.18, 0.2, 0.18, '#7d44b5', 0, 2.17, 0), b(0.48, 0.05, 0.48, '#ffd23f', 0, 1.69, 0)];
+    default: return [];
+  }
+}
+// builds one player model; `accGroup` holds the head accessory so it can be swapped later
+function buildPlayerModel(color, acc) {
+  const root = new THREE.Group(), model = new THREE.Group(), accGroup = new THREE.Group();
   root.add(shadow(0.5), model);
   const skin = '#ffd9b3';
   const legL = box(0.2, 0.42, 0.22, '#2b2b44', -0.14, 0.21, 0), legR = box(0.2, 0.42, 0.22, '#2b2b44', 0.14, 0.21, 0);
@@ -151,17 +171,70 @@ export function ensurePlayer(id, color) {
   model.add(
     legL, legR, box(0.56, 0.7, 0.4, color, 0, 0.74, 0), box(0.44, 0.44, 0.44, skin, 0, 1.3, 0),
     box(0.48, 0.14, 0.48, darken(color, 0.6), 0, 1.57, 0), box(0.15, 0.15, 0.5, skin, 0.3, 0.86, 0.3), gun,
-    box(0.06, 0.06, 0.04, '#222222', -0.1, 1.32, 0.23), box(0.06, 0.06, 0.04, '#222222', 0.1, 1.32, 0.23),
+    box(0.06, 0.06, 0.04, '#222222', -0.1, 1.32, 0.23), box(0.06, 0.06, 0.04, '#222222', 0.1, 1.32, 0.23), accGroup,
   );
-  entGroup.add(root);
-  v = { root, model, legL, legR, gun, gunColor: '', phase: 0 };
+  const v = { root, model, legL, legR, gun, accGroup, gunColor: '', phase: 0, acc: -1, color };
+  setAccessory(v, acc, color);
+  return v;
+}
+export function setAccessory(v, acc, color) {
+  acc = ((acc | 0) % ACC_NAMES.length + ACC_NAMES.length) % ACC_NAMES.length;
+  if (v.acc === acc && v.accColor === color) return;
+  v.acc = acc; v.accColor = color;
+  for (const c of [...v.accGroup.children]) v.accGroup.remove(c);
+  for (const part of accessoryParts(acc, color)) v.accGroup.add(part);
+}
+export function ensurePlayer(id, color, acc = 0) {
+  let v = players.get(id);
+  if (v) return v;
+  v = buildPlayerModel(color, acc);
+  entGroup.add(v.root);
   players.set(id, v);
   return v;
 }
-export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving) {
+
+// A little turntable model for the menu / room lobby, drawn on its own small canvas.
+export function createPreview(canvas, color, acc) {
+  const r = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  r.setSize(canvas.width, canvas.height, false);
+  const sc = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(30, canvas.width / canvas.height, 0.1, 50);
+  cam.position.set(0, 1.5, 6.4);
+  cam.lookAt(0, 1.05, 0);
+  sc.add(new THREE.HemisphereLight(0xcfd8ff, 0x3a2f5c, 1.15));
+  const sun = new THREE.DirectionalLight(0xfff0d0, 1.1);
+  sun.position.set(-3, 6, 5);
+  sc.add(sun);
+  const v = buildPlayerModel(color, acc);
+  v.gun.material = mat('#ffd166');
+  sc.add(v.root);
+  let t = 0, tm = 0;
+  return {
+    set(c, a) {
+      if (c !== v.color) { // new shirt colour: rebuild the model
+        sc.remove(v.root);
+        const nv = buildPlayerModel(c, a); nv.gun.material = mat('#ffd166');
+        Object.assign(v, nv); sc.add(v.root);
+      } else setAccessory(v, a, c);
+    },
+    render(dt) {
+      t += dt; tm += dt;
+      v.model.rotation.y = Math.sin(t * 0.9) * 0.9 + 0.35; // gentle swing so every side is visible
+      v.model.position.y = Math.abs(Math.sin(tm * 2.2)) * 0.03;
+      r.render(sc, cam);
+    },
+  };
+}
+// turn > 0 eases the visible facing toward `a` (exponential, shortest way round); 0 = use `a` as is
+export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, protectedNow = false) {
   v.root.position.set(x, 0, y);
-  v.model.rotation.y = Math.PI / 2 - a;
-  v.model.visible = !dead;
+  if (turn > 0 && v.ang !== undefined && !v.wasDead) v.ang = lerpAngle(v.ang, a, 1 - Math.exp(-dt * turn));
+  else v.ang = a;
+  v.wasDead = dead;
+  v.blink = (v.blink || 0) + dt;
+  v.model.rotation.y = Math.PI / 2 - v.ang;
+  v.model.visible = !dead && (!protectedNow || Math.floor(v.blink * 9) % 2 === 0); // spawn protection: blink
   if (gunColor !== v.gunColor) { v.gunColor = gunColor; v.gun.material = mat(gunColor); }
   if (moving) v.phase += dt * 14;
   const s = moving ? Math.sin(v.phase) : 0;
@@ -237,7 +310,10 @@ export function syncIds(kind, liveIds) {
 function itemMesh(def) {
   const g = new THREE.Group();
   const color = def ? def.color : '#ffffff';
-  if (def && def.type === 'heal') {
+  if (def && def.type === 'ammo') {
+    g.add(box(0.56, 0.3, 0.4, '#5a4a2a', 0, 0.4, 0), box(0.6, 0.06, 0.44, '#3d3220', 0, 0.58, 0));
+    for (const x of [-0.17, 0, 0.17]) g.add(box(0.1, 0.24, 0.1, color, x, 0.74, 0), box(0.1, 0.07, 0.1, '#c98a2b', x, 0.89, 0));
+  } else if (def && def.type === 'heal') {
     g.add(box(0.46, 0.34, 0.46, '#ffffff', 0, 0.45, 0), box(0.32, 0.06, 0.1, '#e63946', 0, 0.64, 0), box(0.1, 0.06, 0.32, '#e63946', 0, 0.64, 0));
   } else {
     g.add(box(0.8, 0.14, 0.2, color, 0, 0.5, 0), box(0.2, 0.3, 0.17, darken(color, 0.65), -0.22, 0.34, 0), box(0.3, 0.1, 0.12, '#303030', 0.28, 0.5, 0));
@@ -341,6 +417,15 @@ export function followCamera(x, y, dt) {
   cam.shake = Math.max(0, cam.shake - dt * 2.4);
   camera.position.set(cam.x + sx, 15.5, cam.y + 10 + sz);
   camera.lookAt(cam.x + sx * 0.5, 0, cam.y - 0.5);
+}
+// where does the screen point (px, py) hit the world at gun height? -> {x, y} in map tiles, or null
+const rayCast = new THREE.Raycaster(), aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.86), ndcV = new THREE.Vector2(), hitV = new THREE.Vector3();
+export function screenToGround(px, py) {
+  if (!camera) return null;
+  camera.updateMatrixWorld();
+  ndcV.set((px / W) * 2 - 1, -(py / H) * 2 + 1);
+  rayCast.setFromCamera(ndcV, camera);
+  return rayCast.ray.intersectPlane(aimPlane, hitV) ? { x: hitV.x, y: hitV.z } : null;
 }
 export function project(x, y, h) {
   projV.set(x, h, y).project(camera);
