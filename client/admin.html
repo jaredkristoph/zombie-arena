@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zombie Arena - Admin</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    html, body { overflow: auto; height: auto; }
+    body { padding: 16px 16px 60px; background: radial-gradient(ellipse at 50% 0%, #2b1f5c 0%, #120f26 70%) fixed; user-select: text; }
+    .wrap { max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .tabs { display: flex; gap: 8px; } .tabs button.on { background: var(--yellow); box-shadow: 0 5px 0 #a67c1d; }
+    .grid2 { display: grid; grid-template-columns: 240px 1fr; gap: 16px; }
+    @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+    .tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .tools button { padding: 6px 10px; font-size: 13px; background: #3a2f7a; color: var(--txt); box-shadow: 0 3px 0 #231a52; }
+    .tools button.on { background: var(--green); color: #12310a; box-shadow: 0 3px 0 #3b7d1b; }
+    #cv { background: #223; border: 2px solid var(--line); border-radius: 10px; cursor: crosshair; max-width: 100%; touch-action: none; image-rendering: pixelated; }
+    .mrow { display: flex; gap: 6px; align-items: center; margin: 6px 0; } .mrow button { padding: 6px 10px; font-size: 12px; }
+    .mrow span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+    .mrow span.sel { color: var(--green); font-weight: 800; }
+    .msg { min-height: 20px; font-weight: 700; } .msg.err { color: var(--pink); } .msg.ok { color: var(--green); }
+    .itemform { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+    table.items { width: 100%; border-collapse: collapse; } table.items td { padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
+    .dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle; margin-right: 6px; border: 2px solid #0006; }
+    a { color: var(--blue); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <h1 class="logo small" style="transform:none">ADMIN</h1>
+    <a href="index.html">&larr; Back to game</a>
+  </div>
+
+  <div class="card" id="login">
+    <h2>Admin password</h2>
+    <div class="row"><input id="pw" type="password" placeholder="Admin password" autocomplete="current-password"><button id="btn-login">Unlock</button></div>
+    <div id="login-msg" class="msg"></div>
+    <div class="tiny">The password is the ADMIN_PASSWORD environment variable on your game server (default: <code>admin</code> - change it!).</div>
+  </div>
+
+  <div id="app" style="display:none">
+    <div class="tabs"><button id="tab-maps" class="on">Maps</button><button id="tab-items" class="ghost">Items</button></div>
+
+    <div id="pane-maps" class="card">
+      <div class="grid2">
+        <div>
+          <h2>Maps</h2>
+          <div id="maplist"></div>
+          <button id="m-new" class="ghost" style="width:100%;margin-top:8px">+ New map</button>
+        </div>
+        <div>
+          <div class="row">
+            <label>Name <input id="m-name" maxlength="24"></label>
+            <label>Width <input id="m-w" type="number" min="16" max="64" value="32"></label>
+            <label>Height <input id="m-h" type="number" min="16" max="64" value="32"></label>
+          </div>
+          <div class="tools" id="tools"></div>
+          <label id="item-pick" style="display:none">Item for spawn point
+            <select id="m-item"></select>
+          </label>
+          <canvas id="cv"></canvas>
+          <div class="tiny">Click or drag to paint. Outer border is always wall. Need at least 1 player spawn and 1 zombie spawn.</div>
+          <div class="row"><button id="m-save">Save map</button><button id="m-dup" class="ghost">Duplicate</button><button id="m-del" class="ghost">Delete</button></div>
+          <div id="m-msg" class="msg"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="pane-items" class="card" style="display:none">
+      <h2>Items</h2>
+      <table class="items" id="itemtable"></table>
+      <h2 style="margin-top:18px" id="if-title">New item</h2>
+      <div class="itemform">
+        <label>Name <input id="i-name" maxlength="20"></label>
+        <label>Type <select id="i-type"><option value="weapon">Weapon</option><option value="heal">Heal item</option></select></label>
+        <label>Color <input id="i-color" type="color" value="#ffcc00"></label>
+        <label class="w">Damage / pellet <input id="i-damage" type="number" value="20" min="1" max="500"></label>
+        <label class="w">Shots per second <input id="i-rate" type="number" value="3" min="0.2" max="20" step="0.1"></label>
+        <label class="w">Range (tiles) <input id="i-range" type="number" value="14" min="3" max="40"></label>
+        <label class="w">Pellets per shot <input id="i-pellets" type="number" value="1" min="1" max="16"></label>
+        <label class="w">Spread (rad) <input id="i-spread" type="number" value="0.05" min="0" max="0.8" step="0.01"></label>
+        <label class="w">Pierce (extra zombies) <input id="i-pierce" type="number" value="0" min="0" max="5"></label>
+        <label class="h" style="display:none">Heal amount <input id="i-heal" type="number" value="40" min="1" max="200"></label>
+      </div>
+      <div class="row"><button id="i-save">Save item</button><button id="i-clear" class="ghost">Clear form</button></div>
+      <div id="i-msg" class="msg"></div>
+    </div>
+  </div>
+</div>
+<script src="config.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

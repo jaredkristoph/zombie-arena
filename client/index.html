@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zombie Arena</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body class="screen-menu">
+  <canvas id="c"></canvas>
+  <div id="labels"></div>
+
+  <!-- ===== in-game HUD ===== -->
+  <div id="hud">
+    <div id="hud-top">
+      <div id="wave-box"><div id="wave-title">WAVE 1</div><div id="wave-sub">Get ready</div></div>
+    </div>
+    <div id="hud-players"></div>
+    <div id="hud-bottom">
+      <div id="hp-wrap"><div id="hp-bar"><div id="hp-fill"></div></div><div id="hp-text">100</div></div>
+      <div id="gear"><span id="weapon-name">Pistol</span><span id="bag-info"></span></div>
+    </div>
+    <div id="prompt"></div>
+    <div id="deadbox"></div>
+    <div id="help">WASD / Arrows move &middot; SPACE shoot &middot; E equip &middot; Q drop gun &middot; H heal &middot; G drop heal &middot; ENTER chat &middot; M mute</div>
+    <div id="ping"></div>
+    <div id="hurt"></div>
+    <div id="toast"></div>
+  </div>
+
+  <!-- ===== menu ===== -->
+  <section id="menu" class="panel screen">
+    <h1 class="logo">ZOMBIE<span>ARENA</span></h1>
+    <div class="cols">
+      <div class="card">
+        <h2>Your name</h2>
+        <input id="name" maxlength="14" placeholder="Survivor" autocomplete="off">
+        <h2>Open rooms</h2>
+        <div id="rooms" class="list"><div class="empty">Connecting...</div></div>
+      </div>
+      <div class="card">
+        <h2>Create a room</h2>
+        <label>Room name <input id="c-name" maxlength="22" placeholder="My room" autocomplete="off"></label>
+        <label>Map <select id="c-map"></select></label>
+        <div class="row">
+          <label>Waves <input id="c-waves" type="number" min="0" max="99" value="10"></label>
+          <label>Max players <input id="c-max" type="number" min="1" max="8" value="4"></label>
+        </div>
+        <label class="tiny">0 waves = endless survival</label>
+        <label>Difficulty
+          <select id="c-diff">
+            <option value="easy">Easy</option>
+            <option value="normal" selected>Normal</option>
+            <option value="hard">Hard</option>
+            <option value="nightmare">Nightmare</option>
+          </select>
+        </label>
+        <button id="btn-create" class="big">Create room</button>
+      </div>
+    </div>
+    <div class="foot"><a href="admin.html" target="_blank">Admin: build maps &amp; items</a></div>
+  </section>
+
+  <!-- ===== room lobby ===== -->
+  <section id="room" class="panel screen">
+    <h1 class="logo small">ZOMBIE<span>ARENA</span></h1>
+    <div class="card wide">
+      <h2 id="r-title">Room</h2>
+      <div id="r-info" class="tiny"></div>
+      <div id="r-players" class="plist"></div>
+      <div class="row">
+        <button id="btn-start" class="big">Start game</button>
+        <button id="btn-leave" class="ghost">Leave</button>
+      </div>
+      <div id="r-wait" class="tiny"></div>
+    </div>
+  </section>
+
+  <!-- ===== game over ===== -->
+  <section id="over" class="panel screen">
+    <h1 id="over-title">GAME OVER</h1>
+    <div id="over-sub"></div>
+    <table id="over-stats"></table>
+    <div class="tiny">Returning to the room lobby shortly...</div>
+  </section>
+
+  <!-- ===== chat (lobby, room and in-game) ===== -->
+  <div id="chat">
+    <div id="chatlog"></div>
+    <input id="chatinput" maxlength="120" placeholder="Press Enter to chat" autocomplete="off">
+  </div>
+
+  <script src="config.js"></script>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

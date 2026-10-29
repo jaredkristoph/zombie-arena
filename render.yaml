@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: zombie-arena
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: NODE_VERSION
+        value: "20"

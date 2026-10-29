@@ -1,0 +1,8 @@
+node_modules/
+data/
+*.log
+.env
+
+.admin-password.local
+.env
+data/
