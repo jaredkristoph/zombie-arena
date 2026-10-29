@@ -11,6 +11,25 @@
 </head>
 <body class="screen-menu">
   <canvas id="c"></canvas>
+  <button id="settings-btn" title="Settings (Esc in game)" tabindex="-1">&#9881;</button>
+  <div id="settings-panel" style="display:none">
+    <h3>Settings</h3>
+    <label>Camera panning <b id="pan-val">40%</b>
+      <input id="set-pan" type="range" min="0" max="100" value="40">
+    </label>
+    <div class="tiny">The camera drifts toward your mouse so you can see farther where you aim (mouse aim only).</div>
+    <label>Volume <b id="vol-val">80%</b>
+      <input id="set-vol" type="range" min="0" max="100" value="80">
+    </label>
+    <label class="chk"><input type="checkbox" id="set-mute"> Mute sound</label>
+    <div id="set-game">
+      <button id="btn-leave-game" class="ghost">Leave game</button>
+      <button id="btn-end-game" class="ghost danger">End game for everyone</button>
+    </div>
+    <button id="set-close">Close</button>
+  </div>
+  <div id="old-server">Your server is running OLD code, so dash is switched off. Stop it (Ctrl+C in the terminal) and run <b>npm start</b> again, then refresh this page.</div>
+  <div id="conn-lost">Connection lost - reconnecting...</div>
   <div id="labels"></div>
 
   <!-- ===== in-game HUD ===== -->
@@ -27,7 +46,7 @@
     </div>
     <div id="prompt"></div>
     <div id="deadbox"></div>
-    <div id="help">WASD / Arrows move &middot; SHIFT sprint (stamina) &middot; MOUSE aim &middot; SPACE / CLICK shoot (limited ammo - grab ammo packs) &middot; E equip &middot; Q drop gun &middot; H heal &middot; G drop heal &middot; ENTER chat &middot; M mute</div>
+    <div id="help">WASD / Arrows move &middot; SHIFT dash-roll (1s invincible, 3s cooldown) &middot; MOUSE aim &middot; SPACE / CLICK shoot (limited ammo - grab ammo packs) &middot; E equip &middot; Q drop gun &middot; H heal &middot; G drop heal &middot; ENTER chat &middot; M mute</div>
     <div id="ping"></div>
     <div id="hurt"></div>
     <div id="toast"></div>
@@ -69,7 +88,8 @@
         <label>Mode
           <select id="c-mode">
             <option value="coop" selected>Co-op survival (vs zombies)</option>
-            <option value="pvp">PvP deathmatch (vs players &amp; bots)</option>
+            <option value="pvp">PvP deathmatch (free for all)</option>
+            <option value="pvp-team">PvP team deathmatch (Red vs Blue)</option>
           </select>
         </label>
         <div class="row">
@@ -104,6 +124,7 @@
       <div id="r-info" class="tiny"></div>
       <div id="slot-room" class="char-slot"></div>
       <div id="r-players" class="plist"></div>
+      <div id="r-teamrow" class="row" style="display:none"><span id="r-team-label"></span><button id="btn-team" class="ghost">Switch team</button></div>
       <div id="r-bots" class="row" style="display:none">
         <button id="btn-addbot" class="ghost">+ Add bot</button>
       </div>

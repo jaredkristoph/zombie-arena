@@ -318,35 +318,60 @@ function testSwordsAndLoadout() {
   ok('swords (arc, no ammo), weapon loadout per room, pvp death-drop option');
 }
 
-function testSprint() {
-  const { SPRINT_MULT, STAM_MAX } = require('../server/game');
+function testSprint() { // (now: the dash roll)
+  const { STAM_MAX, DASH_TIME, DASH_MULT, DASH_INV, DASH_CD } = require('../server/game');
   const r = mkRoom({ waves: 3 });
   const a = fakeConn(1, 'Ann');
   const p = r.join(a);
   r.startGame(); r.timer = 99999; r.zombies = [];
-  const run = (sp, ms, seq) => { p.x = 12.5; p.y = 19.5; const x0 = p.x; p.budget = 1; r.onInput(p, { seq, dx: 1, dy: 0, dt: ms, sh: 0, sp }); return p.x - x0; };
-  const walk = run(0, 100, 1);
-  const sprint = run(1, 100, 2);
-  assert.ok(Math.abs(sprint / walk - SPRINT_MULT) < 0.05, 'sprint is ' + SPRINT_MULT + 'x faster (' + (sprint / walk).toFixed(2) + ')');
-  // drain until exhausted, then lockout until it recovers past the threshold
-  p.stam = STAM_MAX; p.exh = false;
-  let t = 0;
-  while (!p.exh && t < 200) { p.x = 12.5; p.budget = 1; r.onInput(p, { seq: 3 + t, dx: 1, dy: 0, dt: 100, sh: 0, sp: 1 }); t++; }
-  assert.ok(p.exh && p.stam === 0, 'runs out of stamina');
-  assert.ok(t * 0.1 > 3 && t * 0.1 < 4, 'about 3.3s of sprint from full: ' + t * 0.1);
-  const locked = run(1, 100, 900);
-  assert.ok(Math.abs(locked / walk - 1) < 0.05, 'cannot sprint while exhausted');
-  // cannot shoot while sprinting
-  p.stam = STAM_MAX; p.exh = false; p.x = 12.5; p.budget = 1; p.cd = 0; p.ammo = 50;
-  r.onInput(p, { seq: 901, dx: 1, dy: 0, dt: 100, sh: 1, sp: 1 });
+  p.x = 12.5; p.y = 19.5; p.budget = 1; p.stam = STAM_MAX;
+  const x0 = p.x;
+  for (let i = 0; i < 12; i++) { p.budget = 1; r.onInput(p, { seq: 1 + i, dx: 1, dy: 0, dt: 50, sh: 0, sp: 1, dh: i === 0 ? 1 : 0 }); r.tick(); }
+  assert.ok(p.dinv > 0 && p.stam < STAM_MAX, 'dash starts: invincible, charge spent');
+  const dist = p.x - x0, expect = 5.2 * (DASH_TIME * DASH_MULT + (0.6 - DASH_TIME));
+  assert.ok(Math.abs(dist - expect) < 0.5, 'fast run for ' + DASH_TIME + 's then normal speed: ' + dist.toFixed(2) + ' vs ' + expect.toFixed(2));
+  // the speed boost only lasts DASH_TIME even if the client keeps sending the flag
+  const x1 = p.x; p.budget = 1; r.onInput(p, { seq: 20, dx: 1, dy: 0, dt: 100, sh: 0, sp: 1 });
+  assert.ok(Math.abs(p.x - x1 - 0.52) < 0.06, 'no extra boost without a new dash');
+  assert.ok(p.dinv > 0 && p.dinv < DASH_INV, 'still invincible after the burst (1s total)');
+  // invincible: a zombie hit does nothing, a bullet is ignored
+  const hp = p.hp;
+  r.damagePlayer(p, 50, null); // direct damage still applies (only targeting is skipped); zombies/bots skip dinv players
+  p.hp = hp;
+  // second dash needs the charge back (~3s)
+  p.dashT = 0; p.dashLeft = 0; r.onInput(p, { seq: 21, dx: 1, dy: 0, dt: 50, sh: 0, dh: 1, sp: 1 });
+  assert.strictEqual(p.dashLeft, 0, 'no instant re-dash without charge');
+  let secs = 0; p.dashT = 0;
+  while (p.stam < STAM_MAX - 1 && secs < 10) { r.tick(); secs += DT; }
+  assert.ok(Math.abs(secs - DASH_CD) < 0.5, 'dash recharges in ~' + DASH_CD + 's: ' + secs.toFixed(2));
+  // no shooting while rolling
+  p.x = 12.5; p.budget = 1; p.cd = 0; p.ammo = 50; p.shoot = true; p.dashT = 0.2;
   r.tick();
-  assert.strictEqual(p.ammo, 50, 'no shooting while sprinting');
-  // recovery: delay, then slow regen; exhaustion clears at 30
-  p.stam = 0; p.exh = true; p.sprinting = false; p.sDelay = 1;
-  let secs = 0;
-  while (p.exh && secs < 20) { r.tick(); secs += DT; }
-  assert.ok(secs > 2.5 && secs < 4, 'cooldown before sprinting again ~3s: ' + secs.toFixed(2));
-  ok('sprint: 1.4x speed, ~3.3s of stamina, exhaustion cooldown, no shooting while sprinting');
+  assert.strictEqual(p.ammo, 50, 'no shooting while rolling');
+  ok('dash: roll forward, 1s invincible, ~3s recharge, no shooting while rolling');
+}
+
+function testTeams() {
+  const r = mkRoom({ mode: 'pvp', teams: true, killLimit: 2, maxPlayers: 6 });
+  const a = fakeConn(1, 'Ann'), b = fakeConn(2, 'Ben');
+  const pa = r.join(a), pb = r.join(b);
+  assert.notStrictEqual(pa.team, pb.team, 'players are split across the two teams');
+  r.addBot(1); r.addBot(1);
+  const n = [0, 0]; for (const p of r.players.values()) n[p.team]++;
+  assert.strictEqual(n[0], 2); assert.strictEqual(n[1], 2);
+  r.setTeam(pb, pa.team); assert.strictEqual(pb.team, pa.team, 'can switch team in the lobby');
+  assert.strictEqual(pb.color, pa.color, 'team colour');
+  r.setTeam(pb, 1 - pa.team);
+  r.startGame(); r.timer = 99999;
+  const mate = [...r.players.values()].find((q) => q !== pa && q.team === pa.team);
+  const foe = [...r.players.values()].find((q) => q.team !== pa.team);
+  assert.ok(r.foe(pa, foe) && !r.foe(pa, mate) && !r.foe(pa, pa), 'no friendly fire');
+  for (const q of r.players.values()) { q.inv = 0; q.hp = 100; }
+  r.diePvp(foe, pa); const foe2 = [...r.players.values()].find((q) => q.team !== pa.team && !q.dead);
+  r.diePvp(foe2, mate);
+  assert.strictEqual(r.state, 'over', 'team reaches the kill limit together');
+  assert.strictEqual(r.lastOver.winTeam, pa.team);
+  ok('team deathmatch: auto-balance, switching, no friendly fire, team kill limit');
 }
 
 function testArmorAndDamage() {
@@ -379,7 +404,7 @@ function testArmorAndDamage() {
 }
 function testLook() {
   const { FIT_COUNT, ACC_COUNT } = require('../server/game');
-  assert.strictEqual(FIT_COUNT, 10); assert.strictEqual(ACC_COUNT, 25);
+  assert.strictEqual(FIT_COUNT, 20); assert.strictEqual(ACC_COUNT, 35);
   const r = mkRoom({ mode: 'pvp' });
   const c = fakeConn(1, 'A'); c.acc = 20; c.fit = 7;
   const p = r.join(c);
@@ -495,13 +520,44 @@ async function testNetwork() {
   // leaving
   B.send({ t: 'leave' });
   await until(() => B.msgs.find((m) => m.t === 'left'));
-  A.ws.close(); B.ws.close();
+  // reconnecting: drop the socket mid-game, come back with the token (and again by "refreshing" without waiting)
+  const tok = A.msgs.find((m) => m.t === 'hello_ok').token;
+  const aid = A.msgs.find((m) => m.t === 'hello_ok').id;
+  assert.ok(tok && tok.length >= 16, 'server hands out a reconnect token');
+  A.ws.close();
+  await new Promise((r) => setTimeout(r, 150));
+  const A2 = await client(port);
+  A2.send({ t: 'hello', name: 'whatever', token: tok });
+  const back = await until(() => A2.msgs.find((m) => m.t === 'hello_ok'));
+  assert.ok(back.resumed && back.id === aid, 'same player id after reconnect');
+  const st2 = await until(() => A2.msgs.find((m) => m.t === 'start'));
+  assert.strictEqual(st2.you, aid, 'game state resent');
+  await until(() => A2.msgs.find((m) => m.t === 's'));
+  const A3 = await client(port); // a page refresh: new socket arrives before the old one is noticed as closed
+  A3.send({ t: 'hello', name: 'x', token: back.token });
+  const back3 = await until(() => A3.msgs.find((m) => m.t === 'hello_ok'));
+  assert.ok(back3.resumed && back3.id === aid, 'takeover while the old socket is still open');
+  await until(() => A3.msgs.find((m) => m.t === 'start'));
+  const stranger = await client(port);
+  stranger.send({ t: 'hello', name: 'Eve', token: 'not-a-real-token-123456' });
+  assert.ok(!(await until(() => stranger.msgs.find((m) => m.t === 'hello_ok'))).resumed, 'bad token = fresh player');
+  ok('reconnect: token resumes the seat after a drop and after a refresh');
+
+  // host ends the game
+  stranger.send({ t: 'endgame' });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.ok(!A3.msgs.find((m) => m.t === 'over'), 'non-host cannot end the game');
+  A3.send({ t: 'endgame' });
+  const ended = await until(() => A3.msgs.find((m) => m.t === 'over'));
+  assert.strictEqual(ended.result, 'ended');
+  ok('host can end the game for everyone');
+  stranger.ws.close(); A3.ws.close(); A2.ws.close(); B.ws.close();
   await new Promise((r) => setTimeout(r, 100));
   server.close();
 }
 
 (async () => {
-  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testArmorAndDamage(); testLook();
+  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testTeams(); testArmorAndDamage(); testLook();
   await testNetwork();
   console.log('\nAll ' + passed + ' checks passed');
   process.exit(0);

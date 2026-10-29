@@ -1,8 +1,8 @@
 // Zombie Arena client: lobby UI, networking, input + prediction, HUD, chat.
-import { $, clamp, lerp, lerpAngle, makeGrid, moveCircle, PLAYER_R, PLAYER_SPEED, STAM_MAX, SPRINT_MULT, SPRINT_DRAIN, STAM_REGEN, SPRINT_DELAY, STAM_RESUME, sfx, unlockAudio, toggleMute } from './util.js';
+import { $, clamp, lerp, lerpAngle, makeGrid, moveCircle, PLAYER_R, PLAYER_SPEED, STAM_MAX, DASH_TIME, DASH_MULT, KILL_BOOST, DASH_CD, sfx, unlockAudio, toggleMute, setVolume, setMuted } from './util.js';
 import * as W3 from './world.js';
 
-const INTERP_MS = 110;
+const INTERP_MS = 90;
 // Room creation is in beta: the form only appears on the /create address (or ?create)
 const LOC = window.location || {};
 const CREATE_MODE = /create/i.test(LOC.pathname || '') || /(^|[?&])create(=|&|$)/.test(LOC.search || '');
@@ -14,7 +14,7 @@ const S = {
   pending: [], acc: { dx: 0, dy: 0, dt: 0, sh: 0 }, seq: 0, lastKey: '0,0,0', lastIdle: true,
   snaps: [], latest: null, groundList: [], graves: [], wave: { n: 0, of: 0, ph: 0, tm: 0, left: 0 },
   mode: 'coop', killLimit: 0, respawn: 10, mouse: { x: 0, y: 0, down: false, has: false }, aimMode: 'keys', sentAim: 0,
-  stam: STAM_MAX, exh: false, stDelay: 0, sprinting: false,
+  stam: STAM_MAX, exh: false, dashT: 0, ddx: 0, ddy: 0, noRec: 0, dashKey: false,
   acc: 0, fit: 0, myColor: '#1982c4', preview: null, previewOn: false,
   spec: 0, lastHp: 100, ping: 0, loop: false, three: false, shootSfxT: 0, connected: false, retry: 0,
 };
@@ -33,7 +33,8 @@ function wsUrl() {
 }
 function send(o) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(o)); }
 function myName() { return ($('name').value || '').trim(); }
-function ensureName() { send({ t: 'hello', name: myName(), acc: S.acc, fit: S.fit }); }
+function myToken() { try { return sessionStorage.getItem('za-token') || ''; } catch (e) { return ''; } }
+function ensureName() { send({ t: 'hello', name: myName(), acc: S.acc, fit: S.fit, token: myToken() }); }
 
 function connect() {
   clearTimeout(S.retry);
@@ -44,7 +45,11 @@ function connect() {
   ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (err) { return; } handle(m); };
   ws.onclose = () => {
     S.connected = false;
-    if (S.inGame) leaveGameView();
+    if (S.inGame) { // stay on the game screen: the server keeps our seat for a while and sends the game again once we are back
+      document.body.classList.add('conn-lost');
+      scheduleRetry();
+      return;
+    }
     S.room = null;
     setScreen('menu');
     $('rooms').innerHTML = '<div class="empty">Disconnected. Reconnecting...</div>';
@@ -56,9 +61,14 @@ setInterval(() => { if (S.connected) send({ t: 'ping', ts: performance.now() });
 
 function handle(m) {
   switch (m.t) {
-    case 'hello_ok': S.id = m.id; S.name = m.name; fillMaps(m.maps); fillWeapons(m.weapons || []); S.rooms = m.rooms; renderRooms(); localStorage.setItem('za-name', m.name); break;
+    case 'hello_ok':
+      S.serverDash = !!m.dash; document.body.classList.toggle('old-server', !m.dash);
+      document.body.classList.remove('conn-lost');
+      try { if (m.token) sessionStorage.setItem('za-token', m.token); } catch (e) { /* ignore */ }
+      if (S.inGame && !m.resumed) { leaveGameView(); S.room = null; setScreen('menu'); toast('The game you were in has ended'); } // too late to rejoin
+      S.id = m.id; S.name = m.name; fillMaps(m.maps); fillWeapons(m.weapons || []); S.rooms = m.rooms; renderRooms(); localStorage.setItem('za-name', m.name); break;
     case 'rooms': S.rooms = m.rooms; renderRooms(); break;
-    case 'left': S.rooms = m.rooms; S.room = null; renderRooms(); setScreen('menu'); clearChat(); break;
+    case 'left': if (S.inGame) leaveGameView(); S.rooms = m.rooms; S.room = null; renderRooms(); setScreen('menu'); clearChat(); break;
     case 'room': onRoom(m); break;
     case 'start': startGame(m); break;
     case 's': onSnapshot(m); break;
@@ -67,7 +77,11 @@ function handle(m) {
     case 'chat': addChat(m); break;
     case 'toast': toast(m.text); break;
     case 'err': toast(m.msg); break;
-    case 'pong': S.ping = Math.round(performance.now() - m.ts); $('ping').textContent = S.ping + ' ms'; break;
+    case 'dd': if (m.id !== S.id) { // scripted dash: simulate it locally from the start point, same speed and walls as the server
+      W3.startRoll(m.id); S.dashSim.set(m.id, { x: m.x, y: m.y, dx: m.dx, dy: m.dy, left: DASH_TIME, mul: DASH_MULT * (m.b ? KILL_BOOST : 1) }); S.dashFade.delete(m.id);
+      W3.burst(m.x, m.y, 0.1, '#cccccc', 6, 2.5, 0.12, 0.35); sfx('dash', distVol(m.x, m.y) * 0.5);
+    } break;
+    case 'pong': S.ping = Math.round(performance.now() - m.ts); $('ping').textContent = S.ping + ' ms · ' + BUILD; break;
     default:
   }
 }
@@ -168,7 +182,7 @@ function renderRooms() {
     const b = document.createElement('b'); b.textContent = r.name;
     const sm = document.createElement('small');
     const goal = r.mode === 'pvp' ? (r.killLimit ? 'first to ' + r.killLimit : 'endless') : (r.waves ? r.waves + ' waves' : 'endless');
-    sm.textContent = `${r.mode === 'pvp' ? 'PvP' : 'Co-op'} · ${r.map} · ${goal} · ${r.difficulty} · ${r.count}/${r.max}${r.state !== 'lobby' ? ' · in progress' : ''}`;
+    sm.textContent = `${r.mode === 'pvp' ? (r.teams ? 'PvP Teams' : 'PvP') : 'Co-op'} · ${r.map} · ${goal} · ${r.difficulty} · ${r.count}/${r.max}${r.state !== 'lobby' ? ' · in progress' : ''}`;
     meta.append(b, sm);
     const btn = document.createElement('button'); btn.textContent = 'Join'; btn.disabled = r.count >= r.max;
     btn.onclick = () => { ensureName(); send({ t: 'join', room: r.id }); };
@@ -187,12 +201,17 @@ function onRoom(m) {
     const pvp = m.room.mode === 'pvp';
     const host = m.room.host === S.id;
     const goal = pvp ? (m.room.killLimit ? 'first to ' + m.room.killLimit + ' kills' : 'endless') : (m.room.waves ? m.room.waves + ' waves' : 'endless');
-    $('r-info').textContent = `${pvp ? 'PvP deathmatch' : 'Co-op survival'} · ${m.room.map} · ${goal} · ${pvp ? 'bot skill: ' : ''}${m.room.difficulty} · ${m.players.length}/${m.room.max} players${pvp && m.room.drops ? ' · item drops on death' : ''}`;
+    $('r-info').textContent = `${pvp ? (m.room.teams ? 'Team deathmatch (Red vs Blue)' : 'PvP deathmatch') : 'Co-op survival'} · ${m.room.map} · ${goal} · ${pvp ? 'bot skill: ' : ''}${m.room.difficulty} · ${m.players.length}/${m.room.max} players${pvp && m.room.drops ? ' · item drops on death' : ''}`;
     const pl = $('r-players'); pl.innerHTML = '';
-    for (const p of m.players) {
+    const teamed = !!m.room.teams;
+    const ordered = teamed ? m.players.slice().sort((a, b) => a.team - b.team) : m.players;
+    const mine = m.players.find((p) => p.id === S.id);
+    $('r-teamrow').style.display = teamed ? 'flex' : 'none';
+    if (teamed && mine) $('r-team-label').innerHTML = `You are on the <b style="color:${mine.color}">${mine.team ? 'BLUE' : 'RED'}</b> team`;
+    for (const p of ordered) {
       const c = document.createElement('div'); c.className = 'chip' + (p.bot ? ' bot' : '');
       const dot = document.createElement('i'); dot.style.background = p.color;
-      const n = document.createElement('span'); n.textContent = p.name + (p.id === m.room.host ? ' (host)' : '') + (p.id === S.id ? ' (you)' : '');
+      const n = document.createElement('span'); n.textContent = (teamed ? (p.team ? '[Blue] ' : '[Red] ') : '') + p.name + (p.id === m.room.host ? ' (host)' : '') + (p.id === S.id ? ' (you)' : '');
       c.append(dot, n);
       if (p.bot && host) {
         const x = document.createElement('button'); x.textContent = '✕'; x.title = 'Remove bot';
@@ -209,18 +228,19 @@ function onRoom(m) {
       : 'Waiting for the host to start...';
   }
 }
+$('btn-team').onclick = () => { const me = (S.roster || []).find((p) => p.id === S.id); if (me) send({ t: 'team', team: me.team ? 0 : 1 }); };
 $('btn-create').onclick = () => {
   unlockAudio(); ensureName();
   send({
-    t: 'create', name: $('c-name').value, map: $('c-map').value, mode: $('c-mode').value, waves: Number($('c-waves').value),
+    t: 'create', name: $('c-name').value, map: $('c-map').value, mode: $('c-mode').value.startsWith('pvp') ? 'pvp' : 'coop', teams: $('c-mode').value === 'pvp-team', waves: Number($('c-waves').value),
     kills: Number($('c-kills').value), weapons: selectedWeapons(), start: $('c-start').value, drops: $('c-drop').checked, difficulty: $('c-diff').value, max: Number($('c-max').value),
   });
 };
 function syncModeUi() {
-  const pvp = $('c-mode').value === 'pvp';
+  const pvp = $('c-mode').value.startsWith('pvp');
   $('c-waves-l').style.display = pvp ? 'none' : '';
   $('c-kills-l').style.display = pvp ? '' : 'none';
-  $('c-hint').textContent = pvp ? '0 kills = endless deathmatch. You respawn 10s after dying. Add bots in the room lobby.' : '0 waves = endless survival';
+  $('c-hint').textContent = pvp ? ($('c-mode').value === 'pvp-team' ? 'Red vs Blue: kills add up for the team, no friendly fire. 0 = endless. ' : '0 kills = endless deathmatch. ') + 'You respawn 10s after dying. Add bots in the room lobby.' : '0 waves = endless survival';
   $('c-diff-l').textContent = pvp ? 'Bot skill' : 'Difficulty';
   $('c-drop-l').style.display = pvp ? '' : 'none';
 }
@@ -279,12 +299,12 @@ function toast(text) {
 // ---------- game start / stop ----------
 function startGame(m) {
   S.inGame = true; S.map = m.map; S.items = m.items; S.revive = m.revive; S.pickR = m.pickR; S.graveR = m.graveR;
-  S.mode = m.room && m.room.mode === 'pvp' ? 'pvp' : 'coop'; S.killLimit = (m.room && m.room.killLimit) || 0; S.respawn = m.respawn || 10;
+  S.teams = !!(m.room && m.room.teams); S.mode = m.room && m.room.mode === 'pvp' ? 'pvp' : 'coop'; S.killLimit = (m.room && m.room.killLimit) || 0; S.respawn = m.respawn || 10;
   S.mouse.down = false; S.sentAim = 1e9; // force the first input to carry our aim
   document.body.classList.toggle('mode-pvp', S.mode === 'pvp');
   S.grid = makeGrid(m.map);
   S.snaps = []; S.latest = null; S.pending = []; S.groundList = []; S.graves = []; S.me.init = false; S.me.dead = false; S.seq = 0; S.spec = 0;
-  S.acc = { dx: 0, dy: 0, dt: 0, sh: 0, sp: 0 }; S.lastKey = '0,0,0,0'; S.stam = STAM_MAX; S.exh = false; S.stDelay = 0; S.lastIdle = true; S.lastHp = 100;
+  S.acc = { dx: 0, dy: 0, dt: 0, sh: 0, dh: 0, sp: 0 }; S.lastKey = '0,0,0,0'; S.stam = STAM_MAX; S.exh = false; S.dashT = 0; S.noRec = 0; S.dashSeq = 0; S.dashSim.clear(); S.dashFade.clear(); S.lastIdle = true; S.lastHp = 100;
   if (!S.three) { W3.init($('c')); S.three = true; }
   W3.clearAll();
   W3.buildMap(m.map);
@@ -292,8 +312,8 @@ function startGame(m) {
   setScreen('game');
   unlockAudio();
   sfx('wave');
-  S.loop = true; S.last = performance.now();
-  requestAnimationFrame(frame);
+  S.last = performance.now();
+  if (!S.loop) { S.loop = true; requestAnimationFrame(frame); } // (a reconnect re-sends 'start' while the loop is already running)
 }
 function leaveGameView() {
   S.inGame = false; S.loop = false;
@@ -305,12 +325,14 @@ function leaveGameView() {
 function clearLabels() { for (const l of labels.values()) l.el.remove(); labels.clear(); }
 function onOver(m) {
   setScreen('over');
-  const pvp = m.result === 'pvp';
-  const win = pvp ? m.winnerId === S.id : m.result === 'victory';
+  const pvp = m.result === 'pvp', ended = m.result === 'ended';
+  const myTeam = ((S.roster || []).find((p) => p.id === S.id) || {}).team;
+  const win = pvp ? (m.teams ? m.winTeam === myTeam : m.winnerId === S.id) : m.result === 'victory';
   const t = $('over-title');
-  t.textContent = pvp ? (win ? 'YOU WIN!' : `${(m.winner || '?').toUpperCase()} WINS`) : (win ? 'YOU SURVIVED!' : 'GAME OVER');
+  t.textContent = pvp ? (m.teams ? (win ? 'YOUR TEAM WINS!' : `${m.winTeam ? 'BLUE' : 'RED'} TEAM WINS`) : win ? 'YOU WIN!' : `${(m.winner || '?').toUpperCase()} WINS`) : (win ? 'YOU SURVIVED!' : 'GAME OVER');
+  if (ended) t.textContent = 'GAME ENDED';
   t.className = win ? 'win' : 'lose';
-  $('over-sub').textContent = pvp ? `Deathmatch over${m.killLimit ? ' - first to ' + m.killLimit + ' kills' : ''}.` : (win ? 'All waves cleared. Nice teamwork!' : `The horde got you on wave ${m.wave}.`);
+  $('over-sub').textContent = ended ? 'The host ended the game.' : pvp ? (m.teams && m.teamScore ? `Red ${m.teamScore[0]} - ${m.teamScore[1]} Blue. ` : '') + `Deathmatch over${m.killLimit ? ' - first to ' + m.killLimit + ' kills' : ''}.` : (win ? 'All waves cleared. Nice teamwork!' : `The horde got you on wave ${m.wave}.`);
   const tb = $('over-stats'); tb.innerHTML = '<tr><th>PLAYER</th><th>KILLS</th><th>DEATHS</th></tr>';
   for (const s of m.stats) {
     const r = document.createElement('tr');
@@ -340,7 +362,9 @@ function onSnapshot(m) {
     S.lastHp = sp[4];
     me.hp = sp[4]; me.weapon = sp[5]; me.dead = !!sp[6]; me.bag = sp[7]; me.kills = sp[8]; me.rs = sp[9] || 0;
     me.armor = sp[15] || 0;
-    if (sp[13] !== undefined) { if (sp[13] < S.stam - 12 || me.dead) S.stam = sp[13]; if (sp[14]) S.exh = true; if (me.dead) { S.stam = STAM_MAX; S.exh = false; } } me.ammo = sp[12] === undefined ? 0 : sp[12];
+    if (sp[17] === 1 && !S.boost && !me.dead) toast('Kill! +20% speed for 10s');
+    S.boost = sp[17] === 1;
+    if (sp[13] !== undefined) { if (sp[13] < S.stam - 12 || me.dead) S.stam = sp[13]; if (me.dead) { S.stam = STAM_MAX; S.dashT = 0; } } me.ammo = sp[12] === undefined ? 0 : sp[12];
     if (!me.init) { me.init = true; me.x = me.vx = sp[1]; me.y = me.vy = sp[2]; me.a = sp[3]; W3.snapCamera(sp[1], sp[2]); }
     // reconcile: server state + replay of inputs the server has not processed yet
     const sx = sp[1], sy = sp[2];
@@ -349,7 +373,7 @@ function onSnapshot(m) {
     if (!me.dead) {
       for (const q of S.pending) moveCircle(S.grid, e, q.dx * PLAYER_SPEED * q.m * q.dt, q.dy * PLAYER_SPEED * q.m * q.dt, PLAYER_R);
       const a = S.acc;
-      if (a.dt > 0 && (a.dx || a.dy)) { const am = a.sp ? SPRINT_MULT : 1; moveCircle(S.grid, e, a.dx * PLAYER_SPEED * am * a.dt, a.dy * PLAYER_SPEED * am * a.dt, PLAYER_R); }
+      if (a.dt > 0 && (a.dx || a.dy)) { const am = (a.sp ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1); moveCircle(S.grid, e, a.dx * PLAYER_SPEED * am * a.dt, a.dy * PLAYER_SPEED * am * a.dt, PLAYER_R); }
       if (Math.hypot(e.x - me.x, e.y - me.y) > 2.5) { me.x = e.x; me.y = e.y; }
       else { me.x += (e.x - me.x) * 0.35; me.y += (e.y - me.y) * 0.35; }
     } else { me.x = sx; me.y = sy; }
@@ -366,18 +390,22 @@ function fx(ev) {
     case 's': {
       const [, x, y, a, len, hit, wid] = ev;
       const def = S.items[wid], col = def ? def.color : '#ffffff';
-      const dx = Math.cos(a), dy = Math.sin(a), off = Math.min(0.6, len);
-      W3.tracer(x + dx * off, y + dy * off, x + dx * len, y + dy * len, col);
-      W3.burst(x + dx * 0.7, y + dy * 0.7, 0.85, '#ffe27a', 3, 2.5, 0.16, 0.12);
+      const dx = Math.cos(a), dy = Math.sin(a);
+      // the gun's muzzle: 0.97 ahead and 0.3 to the right of the body centre (see buildPlayerModel)
+      const tx = x + dx * 0.97 + dy * 0.3, ty = y + dy * 0.97 - dx * 0.3;
+      const far = len > 1.02; // (a point-blank hit ends right at the muzzle)
+      W3.tracer(tx, ty, far ? x + dx * len : tx + dx * 0.06, far ? y + dy * len : ty + dy * 0.06, col);
+      W3.burst(tx + dx * 0.05, ty + dy * 0.05, 0.86, '#ffe27a', 4, 2.5, 0.18, 0.12);
       if (hit) W3.burst(x + dx * len, y + dy * len, 0.8, '#7bd24a', 4, 3.2, 0.14, 0.4);
       const now = performance.now();
       if (now - S.shootSfxT > 35) { S.shootSfxT = now; sfx('shoot', distVol(x, y) * 0.8); }
       if (hit) sfx('hit', distVol(x + dx * len, y + dy * len) * 0.7);
       break;
     }
-    case 'k': W3.burst(ev[1], ev[2], 0.7, '#6bbf3a', ev[3] === 2 ? 26 : 12, 5, ev[3] === 2 ? 0.28 : 0.18, 0.7); W3.burst(ev[1], ev[2], 0.6, '#c0392b', 5, 4, 0.14, 0.6); sfx('kill', distVol(ev[1], ev[2])); break;
+    case 'k': W3.addBlood(ev[1], ev[2], ev[3] === 2 ? 1.7 : 1, ev[3] === 2 ? 9 : 6); W3.burst(ev[1], ev[2], 0.7, '#6bbf3a', ev[3] === 2 ? 26 : 12, 5, ev[3] === 2 ? 0.28 : 0.18, 0.7); W3.burst(ev[1], ev[2], 0.6, '#c0392b', 5, 4, 0.14, 0.6); sfx('kill', distVol(ev[1], ev[2])); break;
     case 'h': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.9, '#ff3b5c', 8, 3.5, 0.15, 0.45); sfx('hurt', ev[1] === S.id ? 1 : distVol(v ? v[1] : 99, v ? v[2] : 99) * 0.6); break; }
-    case 'd': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.8, '#ff3b5c', 22, 5, 0.2, 0.8); sfx('death', ev[1] === S.id ? 1 : 0.5); if (ev[1] === S.id) W3.shake(0.8); break; }
+    case 'D': if (ev[1] !== S.id) W3.startRoll(ev[1]); break; // (the 'dd' message normally got there first)
+    case 'd': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.addBlood(v[1], v[2], 1.6, 9); if (v) W3.burst(v[1], v[2], 0.8, '#ff3b5c', 22, 5, 0.2, 0.8); sfx('death', ev[1] === S.id ? 1 : 0.5); if (ev[1] === S.id) W3.shake(0.8); break; }
     case 'r': { const v = S.latest && S.latest.p.get(ev[1]); if (v) W3.burst(v[1], v[2], 0.3, '#9be564', 30, 4, 0.18, 1.0); sfx('revive', ev[1] === S.id ? 1 : 0.6); break; }
     case 'w': {
       const [, pid, x, y, a, range, arc, hit, wid] = ev;
@@ -421,9 +449,9 @@ window.addEventListener('keydown', (e) => {
     case 'KeyQ': send({ t: 'act', k: 'drop' }); break;
     case 'KeyG': send({ t: 'act', k: 'dropheal' }); break;
     case 'KeyH': send({ t: 'act', k: 'heal' }); break;
-    case 'KeyM': toast(toggleMute() ? 'Sound off' : 'Sound on'); break;
+    case 'KeyM': { const mu = toggleMute(); toast(mu ? 'Sound off' : 'Sound on'); S.set.mute = mu; $('set-mute').checked = mu; saveSettings(); break; }
     case 'Tab': cycleSpectate(e.shiftKey ? -1 : 1); e.preventDefault(); break;
-    case 'Escape': closeChat(); break;
+    case 'Escape': if (document.body.classList.contains('chat-open')) closeChat(); else toggleSettings(); break;
     default:
   }
 });
@@ -436,6 +464,7 @@ function setAimMode(mode) {
   if (S.inGame) toast(mode === 'mouse' ? 'Aim: mouse' : 'Aim: keyboard (arrows / walking direction)');
 }
 window.addEventListener('mousemove', (e) => {
+  if (e.target && e.target.closest && e.target.closest('#settings-panel, #settings-btn')) return;
   const m = S.mouse;
   if (m.has && Math.hypot(e.clientX - m.x, e.clientY - m.y) < 3) return;
   m.x = e.clientX; m.y = e.clientY;
@@ -468,14 +497,15 @@ function flushInput() {
   const aim = S.me.a;
   let ad = Math.abs(aim - S.sentAim) % (Math.PI * 2);
   if (ad > Math.PI) ad = Math.PI * 2 - ad;
-  const idle = !moving && !a.sh && !(ad > 0.01 && !S.me.dead);
+  const idle = !moving && !a.sh && !a.dh && !(ad > 0.01 && !S.me.dead);
   if (idle && S.lastIdle) { a.dt = 0; return; }
   S.lastIdle = idle;
   S.sentAim = aim;
   const dt = Math.min(a.dt, 0.1);
   S.seq++;
-  send({ t: 'in', seq: S.seq, dx: a.dx, dy: a.dy, dt: Math.round(dt * 1000), sh: a.sh, sp: a.sp ? 1 : 0, aa: Math.round(aim * 1000) / 1000 });
-  if (moving && dt > 0) S.pending.push({ seq: S.seq, dx: a.dx, dy: a.dy, dt, m: a.sp ? SPRINT_MULT : 1 });
+  send({ t: 'in', seq: S.seq, dx: a.dx, dy: a.dy, dt: Math.round(dt * 1000), sh: a.sh, dh: a.dh ? 1 : 0, sp: a.sp ? 1 : 0, aa: Math.round(aim * 1000) / 1000 });
+  a.dh = 0;
+  if (moving && dt > 0) S.pending.push({ seq: S.seq, dx: a.dx, dy: a.dy, dt, m: (a.sp ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1) });
   if (S.pending.length > 40) S.pending.shift();
   a.dt = 0;
 }
@@ -491,18 +521,19 @@ function inputStep(dt) {
   }
   const len = Math.hypot(dx, dy);
   if (len > 0) { dx /= len; dy /= len; }
-  // sprint (Shift): needs stamina, drains it, then a cooldown before it can be used again
-  const wantSprint = !typing && !me.dead && len > 0 && (keys.ShiftLeft || keys.ShiftRight);
-  const sprint = wantSprint && !S.exh && S.stam > 0 ? 1 : 0;
-  S.sprinting = !!sprint;
-  if (sprint) {
-    S.stam -= SPRINT_DRAIN * dt; S.stDelay = SPRINT_DELAY;
-    if (S.stam <= 0) { S.stam = 0; S.exh = true; }
-  } else if ((S.stDelay -= dt) <= 0) {
-    S.stDelay = 0; S.stam = Math.min(STAM_MAX, S.stam + STAM_REGEN * dt);
-    if (S.exh && S.stam >= STAM_RESUME) S.exh = false;
+  // dash (Shift, one press): a forward roll with 1s of invincibility, then a cooldown (the stamina bar is the dash charge)
+  const shiftDown = !typing && !me.dead && !!(keys.ShiftLeft || keys.ShiftRight);
+  let startDash = false;
+  if (shiftDown && !S.dashKey && S.serverDash && S.dashT <= 0 && S.stam >= STAM_MAX - 1) {
+    startDash = true; S.dashT = DASH_TIME; S.stam = 0;
+    S.ddx = len > 0 ? dx : Math.cos(me.a); S.ddy = len > 0 ? dy : Math.sin(me.a);
+    sfx('dash');
   }
-  const sh = !typing && !me.dead && !sprint && (keys.Space || S.mouse.down) ? 1 : 0;
+  S.dashKey = shiftDown;
+  if (S.dashT <= 0) S.stam = Math.min(STAM_MAX, S.stam + (STAM_MAX / DASH_CD) * dt);
+  const rolling = S.dashT > 0;
+  if (rolling) { dx = S.ddx; dy = S.ddy; } // while rolling you run fast in the dash direction
+  const sh = !typing && !me.dead && !rolling && (keys.Space || S.mouse.down) ? 1 : 0;
   // ---- aiming: pick a target angle, then turn toward it smoothly (never snap) ----
   if (!me.dead) {
     let target = null, rate = 14;
@@ -512,12 +543,14 @@ function inputStep(dt) {
     } else if (len > 0) target = Math.atan2(dy, dx);
     if (target !== null) me.a = lerpAngle(me.a, target, 1 - Math.exp(-dt * rate));
   }
-  const key = dx.toFixed(2) + ',' + dy.toFixed(2) + ',' + sh + ',' + sprint;
-  if (key !== S.lastKey) { flushInput(); S.lastKey = key; S.acc.dx = dx; S.acc.dy = dy; S.acc.sh = sh; S.acc.sp = sprint; }
+  const key = dx.toFixed(2) + ',' + dy.toFixed(2) + ',' + sh + ',' + (rolling ? 1 : 0);
+  if (key !== S.lastKey) { flushInput(); S.lastKey = key; S.acc.dx = dx; S.acc.dy = dy; S.acc.sh = sh; S.acc.sp = rolling ? 1 : 0; if (startDash) { S.acc.dh = 1; flushInput(); } } // (a new dash is sent at once, not with the next 50ms batch)
   S.acc.dt += dt;
-  if (len > 0 && !me.dead) { const mu = sprint ? SPRINT_MULT : 1; moveCircle(S.grid, me, dx * PLAYER_SPEED * mu * dt, dy * PLAYER_SPEED * mu * dt, PLAYER_R); }
-  if (S.acc.dt >= 0.05) flushInput();
-  return len > 0;
+  const moveLen = rolling ? 1 : len;
+  if (moveLen > 0 && !me.dead) { const mu = (rolling ? DASH_MULT : 1) * (S.boost ? KILL_BOOST : 1); moveCircle(S.grid, me, dx * PLAYER_SPEED * mu * dt, dy * PLAYER_SPEED * mu * dt, PLAYER_R); }
+  if (rolling) { S.dashT -= dt; if (S.dashT <= 0) S.dashT = 0; }
+  if (S.acc.dt >= (rolling ? 0.017 : 0.05)) flushInput(); // (while rolling, send every frame so others see the burst at once)
+  return moveLen > 0;
 }
 
 // ---------- interpolation ----------
@@ -584,12 +617,29 @@ function frame(now) {
     let x, y, a, mv;
     if (id === S.id) { x = me.vx; y = me.vy; a = me.a; mv = moving; }
     else {
-      const q = interp('p', id) || [p[1], p[2], p[3]];
-      mv = Math.hypot(q[0] - (v.lx === undefined ? q[0] : v.lx), q[1] - (v.ly === undefined ? q[1] : v.ly)) > 0.004;
+      let q = interp('p', id) || [p[1], p[2], p[3]];
+      // other players are drawn ~90ms in the past (smooth interpolation). A dash is different: the 'dd' message starts a scripted
+      // dash on every screen at once (like a shot), then we ease back into the interpolated position.
+      const sim = S.dashSim.get(id);
+      if (sim) {
+        const st = Math.min(dt, sim.left);
+        moveCircle(S.grid, sim, sim.dx * PLAYER_SPEED * sim.mul * st, sim.dy * PLAYER_SPEED * sim.mul * st, PLAYER_R);
+        sim.left -= dt;
+        q = [sim.x, sim.y, q[2]];
+        if (sim.left <= 0) { S.dashFade.set(id, { x: sim.x, y: sim.y, k: 1 }); S.dashSim.delete(id); }
+      } else {
+        const f = S.dashFade.get(id);
+        if (f) { f.k -= dt * 4; if (f.k <= 0) S.dashFade.delete(id); else q = [lerp(q[0], f.x, f.k), lerp(q[1], f.y, f.k), q[2]]; }
+      }
+      const moved = Math.hypot(q[0] - (v.lx === undefined ? q[0] : v.lx), q[1] - (v.ly === undefined ? q[1] : v.ly));
+      mv = moved > 0.004;
       v.lx = q[0]; v.ly = q[1]; x = q[0]; y = q[1]; a = q[2];
     }
     // our own aim is already smoothed in inputStep; other players are eased here so 20Hz snapshots never look steppy
-    W3.updatePlayer(v, x, y, a, !!p[6], gunCol, dt, mv, id === S.id ? 0 : 16, !!p[10], !!(def && def.melee));
+    W3.updatePlayer(v, x, y, a, !!p[6], gunCol, dt, mv, id === S.id ? 0 : 16, !!p[10], !!(def && def.melee), id === S.id ? S.dashT > 0 : p[16] === 1);
+    if (id === S.id ? S.dashT > 0 : (p[16] === 1 || (v.rollTimer > 0))) { // dash: dust kicked up behind the roller, visible to everyone
+      W3.burst(x - Math.cos(a) * 0.3, y - Math.sin(a) * 0.3, 0.15, '#d9d2c3', 2, 1.6, 0.2, 0.35);
+    }
     const l = label('p' + id, color);
     l.nm.textContent = info ? info.name + (p[6] ? ' (dead)' : '') : '...';
     if (l.talkUntil && now > l.talkUntil) { l.talkUntil = 0; l.el.classList.remove('talking'); }
@@ -643,6 +693,13 @@ function frame(now) {
     const si = S.roster.find((r) => r.id === S.spec);
     S.specName = q && si ? si.name : '';
   }
+  // camera panning: lean toward the mouse so you can see farther in the direction you aim (mouse aim only)
+  if (!me.dead && S.set.pan > 0 && S.aimMode === 'mouse' && S.mouse.has) {
+    const k = S.set.pan / 100;
+    const dz = (n) => Math.sign(n) * Math.max(0, (Math.abs(n) - 0.12) / 0.88); // small dead zone in the middle of the screen
+    cx += dz(clamp((S.mouse.x / (window.innerWidth || 1)) * 2 - 1, -1, 1)) * 7 * k;
+    cy += dz(clamp((S.mouse.y / (window.innerHeight || 1)) * 2 - 1, -1, 1)) * 5.5 * k;
+  }
   W3.followCamera(cx, cy, dt);
   W3.draw(dt, now / 1000);
   updateHud(me, myGrave);
@@ -651,8 +708,15 @@ function frame(now) {
 function updateHud(me, myGrave) {
   const w = S.wave;
   if (S.mode === 'pvp') {
-    setText('wave-title', 'DEATHMATCH');
-    setText('wave-sub', S.killLimit ? `First to ${S.killLimit} kills` : 'Endless - most kills wins bragging rights');
+    if (S.teams) {
+      const sc = [0, 0];
+      for (const p of S.latest.p.values()) { const r = S.roster.find((q) => q.id === p[0]); if (r && r.team >= 0) sc[r.team] += p[8]; }
+      setText('wave-title', `RED ${sc[0]}  -  ${sc[1]} BLUE`);
+      setText('wave-sub', S.killLimit ? `Team deathmatch - first to ${S.killLimit} kills` : 'Team deathmatch - endless');
+    } else {
+      setText('wave-title', 'DEATHMATCH');
+      setText('wave-sub', S.killLimit ? `First to ${S.killLimit} kills` : 'Endless - most kills wins bragging rights');
+    }
   } else if (w.ph) { setText('wave-title', `WAVE ${w.n}${w.of ? ' / ' + w.of : ''}`); setText('wave-sub', `${w.left} zombies left`); }
   else if (w.n === 0) { setText('wave-title', 'GET READY'); setText('wave-sub', `Wave 1 starts in ${w.tm}s`); }
   else { setText('wave-title', `WAVE ${w.n} CLEARED`); setText('wave-sub', `Next wave in ${w.tm}s - revive friends & grab loot`); }
@@ -660,7 +724,7 @@ function updateHud(me, myGrave) {
   $('armor-bar').style.display = me.armor > 0 ? 'block' : 'none';
   $('armor-fill').style.width = clamp(me.armor, 0, 100) + '%';
   $('stam-fill').style.width = clamp(S.stam, 0, STAM_MAX) + '%';
-  $('stam-fill').classList.toggle('exh', S.exh);
+  $('stam-fill').classList.toggle('exh', S.stam < STAM_MAX - 1);
   setText('hp-text', String(Math.max(0, Math.round(me.hp))));
   const def = S.items[me.weapon] || S.items.pistol;
   setText('weapon-name', def ? def.name : 'Pistol');
@@ -689,6 +753,38 @@ function updateHud(me, myGrave) {
   } else db.style.display = 'none';
 }
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+
+const BUILD = 'b16'; // shown in the corner so you can check every window runs the same version
+// ---------- settings (gear button, top right; on the menu, in the room lobby and in game) ----------
+S.dashSim = new Map(); S.dashFade = new Map();
+globalThis.__za = S; S.W3 = W3; // (debug / tests)
+S.set = { pan: 40, vol: 80, mute: false };
+try { Object.assign(S.set, JSON.parse(localStorage.getItem('za-settings2') || '{}')); } catch (e) { /* ignore */ }
+function saveSettings() { try { localStorage.setItem('za-settings2', JSON.stringify(S.set)); } catch (e) { /* ignore */ } }
+function applySettings() {
+  $('set-pan').value = S.set.pan; $('pan-val').textContent = S.set.pan + '%';
+  $('set-vol').value = S.set.vol; $('vol-val').textContent = S.set.vol + '%';
+  $('set-mute').checked = !!S.set.mute;
+  setVolume(S.set.vol / 100); setMuted(S.set.mute);
+}
+function toggleSettings(force) {
+  const p = $('settings-panel');
+  const open = force === undefined ? p.style.display === 'none' : force;
+  p.style.display = open ? 'flex' : 'none';
+  if (open) $('btn-end-game').classList.toggle('on', !!(S.room && S.room.host === S.id));
+  if (open) for (const k in keys) keys[k] = false;
+}
+$('settings-btn').onclick = () => toggleSettings();
+$('settings-btn').onmousedown = (e) => e.preventDefault(); // keep keyboard focus off the button so Space still shoots
+$('set-close').onclick = () => toggleSettings(false);
+$('set-pan').oninput = () => { S.set.pan = Number($('set-pan').value); applySettings(); saveSettings(); };
+$('set-vol').oninput = () => { S.set.vol = Number($('set-vol').value); applySettings(); saveSettings(); };
+$('set-pan').onchange = $('set-vol').onchange = () => { document.activeElement && document.activeElement.blur && document.activeElement.blur(); };
+$('set-mute').onchange = () => { S.set.mute = $('set-mute').checked; applySettings(); saveSettings(); $('set-mute').blur(); };
+$('btn-leave-game').onclick = () => { toggleSettings(false); send({ t: 'leave' }); };
+$('btn-end-game').onclick = () => { toggleSettings(false); send({ t: 'endgame' }); };
+applySettings();
 
 // go
 setScreen('menu');

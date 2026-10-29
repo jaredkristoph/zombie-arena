@@ -78,6 +78,8 @@ global.innerWidth = 1280; global.innerHeight = 720; global.devicePixelRatio = 1;
 global.localStorage = { _d: {}, getItem(k) { return this._d[k] || null; }, setItem(k, v) { this._d[k] = String(v); } };
 global.location = { protocol: 'http:', host: 'x', pathname: '/create', search: '' };
 global.WebSocket = WebSocket;
+const origSend = WebSocket.prototype.send;
+WebSocket.prototype.send = function (d, ...a) { if (global.__delayMs) setTimeout(() => { try { origSend.call(this, d, ...a); } catch (e) { /* closed */ } }, global.__delayMs); else origSend.call(this, d, ...a); };
 let rafCb = null;
 global.requestAnimationFrame = (cb) => { rafCb = cb; };
 const fire = (type, ev) => (winHandlers[type] || []).forEach((f) => f(Object.assign({ preventDefault() {}, stopPropagation() {} }, ev)));
@@ -107,11 +109,11 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   fire('keydown', { code: 'ArrowRight' });
   assert.strictEqual($('acc-name').textContent, 'Cowboy Hat');
   fire('keydown', { code: 'ArrowLeft' }); fire('keydown', { code: 'ArrowLeft' }); fire('keydown', { code: 'ArrowLeft' });
-  assert.strictEqual($('acc-name').textContent, 'Pumpkin', 'wraps around');
+  assert.strictEqual($('acc-name').textContent, 'Rubber Duck', 'wraps around');
   fire('keydown', { code: 'ArrowDown' });
   assert.strictEqual($('fit-name').textContent, 'Hoodie');
   $('fit-prev').onclick(); $('fit-prev').onclick();
-  assert.strictEqual($('fit-name').textContent, 'Ninja', 'outfit wraps');
+  assert.strictEqual($('fit-name').textContent, 'Tuxedo', 'outfit wraps');
   $('rand-look').onclick();
   assert.ok($('acc-name').textContent && $('fit-name').textContent, 'randomize works');
   console.log('  ok  menu: character preview, accessory buttons + arrow keys');
@@ -156,6 +158,47 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   await stepFrames(400);
   assert.ok(global.__frames > snapBefore);
   console.log('  ok  input: move + shoot for 1.5s without errors');
+
+  // dash: roll forward and stay there (no rubber-banding back to the start), also with a slow connection
+  for (const delay of [0, 300]) {
+    const rm = [...require('../server/server').rooms.values()][0];
+    const sp0 = [...rm.players.values()].find((p) => p.name === 'Tester');
+    const S = globalThis.__za;
+    // find an open corridor 12 tiles long and stand at its start
+    let spot = null;
+    for (let y = 2; y < rm.H - 2 && !spot; y++) for (let x = 2; x < rm.W - 14 && !spot; x++) {
+      let ok2 = true;
+      for (let i = -1; i < 12 && ok2; i++) for (const dy of [-1, 0, 1]) if (rm.solidArr[(y + dy) * rm.W + x + i]) ok2 = false;
+      if (ok2) spot = { x: x + 0.5, y: y + 0.5 };
+    }
+    assert.ok(spot, 'open corridor for the test');
+    global.__delayMs = 0; await stepFrames(300);
+    sp0.x = spot.x; sp0.y = spot.y; sp0.stam = 100;
+    await stepFrames(1500);
+    global.__delayMs = delay; S.stam = 100;
+    const x0 = S.me.x;
+    fire('keydown', { code: 'KeyD' }); await stepFrames(100); fire('keydown', { code: 'ShiftLeft' }); await stepFrames(60); fire('keyup', { code: 'ShiftLeft' });
+    fire('keyup', { code: 'KeyD' });
+    let minX = 99, log = [];
+    for (let i = 0; i < 16; i++) { await stepFrames(100); log.push((S.me.x - x0).toFixed(1)); minX = Math.min(minX, i > 4 ? S.me.x - x0 : 99); }
+    console.log('   delay', delay, 'client x trail:', log.join(' '), 'server', (sp0.x - x0).toFixed(1));
+    assert.ok(S.me.x - x0 > 3, 'ended ahead after dash (delay ' + delay + ')');
+    assert.ok(minX > 2.5, 'never pulled back after the roll (delay ' + delay + '): min ' + minX.toFixed(2));
+    global.__delayMs = 0; await stepFrames(900);
+  }
+  console.log('  ok  dash: stays at the destination (also with a slow connection)');
+
+  // other players' roll animation is visible
+  {
+    const botId = botMsgs.find((m) => m.t === 'hello_ok').id;
+    const W3m = globalThis.__za.W3;
+    bot.send(JSON.stringify({ t: 'in', seq: 1, dx: 1, dy: 0, dt: 50, sh: 0, sp: 1, dh: 1, aa: 0 }));
+    let maxRot = 0, sawRoll = 0; const px0 = W3m.playerView(botId).root.position.x; let pxMax = px0;
+    for (let i = 0; i < 12; i++) { await stepFrames(60); const v = W3m.playerView(botId); if (v) { pxMax = Math.max(pxMax, v.root.position.x); maxRot = Math.max(maxRot, Math.abs(v.model.rotation.x)); if (v.rollT > 0) sawRoll++; if (v.rollTimer > 0) globalThis.__evRoll = (globalThis.__evRoll || 0) + 1; } }
+    console.log('   other player roll: max rotation', maxRot.toFixed(2), 'frames rolling', sawRoll);
+    assert.ok(sawRoll > 3 && maxRot > 1, 'roll animation shows on other players'); assert.ok(globalThis.__evRoll > 3, 'started by the dash event'); console.log('   bot drawn moving', (pxMax - px0).toFixed(2), 'tiles during its dash'); assert.ok(pxMax - px0 > 3, 'observer plays the scripted dash movement');
+    await stepFrames(1500);
+  }
 
   // in-game chat: Enter opens input, type, Enter sends
   fire('keydown', { code: 'Enter', key: 'Enter' });

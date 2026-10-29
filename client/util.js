@@ -11,8 +11,8 @@ export function lerpAngle(a, b, f) {
 
 export const PLAYER_R = 0.38;
 export const PLAYER_SPEED = 5.2;
-// sprint (keep in sync with server/game.js)
-export const STAM_MAX = 100, SPRINT_MULT = 1.4, SPRINT_DRAIN = 30, STAM_REGEN = 14, SPRINT_DELAY = 1, STAM_RESUME = 30;
+// dash (keep in sync with server/game.js)
+export const STAM_MAX = 100, DASH_TIME = 0.55, DASH_MULT = 2.4, KILL_BOOST = 1.2, DASH_CD = 3;
 
 export function makeGrid(map) {
   const g = { w: map.w, h: map.h, solid: new Uint8Array(map.w * map.h) };
@@ -43,10 +43,13 @@ export function moveCircle(g, e, dx, dy, r) {
 // ---------- sound ----------
 let actx = null;
 let muted = false;
+let master = 0.8;
 export function unlockAudio() {
   if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
   try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; }
 }
+export function setVolume(v) { master = clamp(v, 0, 1); }
+export function setMuted(m) { muted = !!m; }
 export function toggleMute() { muted = !muted; return muted; }
 function tone(f0, f1, dur, type, vol) {
   if (!actx || muted) return;
@@ -55,7 +58,7 @@ function tone(f0, f1, dur, type, vol) {
   o.type = type;
   o.frequency.setValueAtTime(f0, t);
   o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
-  g.gain.setValueAtTime(vol, t);
+  g.gain.setValueAtTime(vol * master, t);
   g.gain.exponentialRampToValueAtTime(0.001, t + dur);
   o.connect(g); g.connect(actx.destination);
   o.start(t); o.stop(t + dur + 0.02);
@@ -66,7 +69,7 @@ function noise(dur, vol, freq) {
   const buf = actx.createBuffer(1, n, actx.sampleRate), d = buf.getChannelData(0);
   for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
   const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
-  s.buffer = buf; f.type = 'lowpass'; f.frequency.value = freq; g.gain.value = vol;
+  s.buffer = buf; f.type = 'lowpass'; f.frequency.value = freq; g.gain.value = vol * master;
   s.connect(f); f.connect(g); g.connect(actx.destination); s.start(t);
 }
 export function sfx(kind, vol = 1) {
@@ -79,6 +82,7 @@ export function sfx(kind, vol = 1) {
     case 'death': tone(300, 40, 0.7, 'sawtooth', 0.18 * vol); break;
     case 'pick': tone(500, 900, 0.1, 'triangle', 0.12 * vol); break;
     case 'heal': tone(520, 1040, 0.25, 'sine', 0.16 * vol); break;
+    case 'dash': noise(0.18, 0.18 * vol); tone(500, 200, 0.15, 'triangle', 0.1 * vol); break;
     case 'revive': tone(400, 1200, 0.45, 'sine', 0.2 * vol); tone(600, 1500, 0.5, 'triangle', 0.1 * vol); break;
     case 'wave': tone(110, 80, 0.6, 'sawtooth', 0.14 * vol); break;
     case 'empty': tone(160, 110, 0.05, 'square', 0.07 * vol); break;

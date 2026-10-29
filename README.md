@@ -22,7 +22,7 @@ Open the page in two browser tabs to try multiplayer. `npm test` runs the server
 |---|---|
 | WASD / Arrow keys | Walk |
 | **Mouse** | Aim at the cursor - your character turns smoothly toward it |
-| **Shift** | Sprint: 1.4x speed for ~3 seconds of stamina (yellow bar under your health). When it runs out you're exhausted and must wait ~3s; you can't shoot or swing while sprinting |
+| **Shift** | Dash: a quick forward roll (in the direction you move, or where you face) that makes you invincible for 1 second. The yellow bar under your health is the dash charge; it refills in 3 seconds. You can't shoot or swing while rolling |
 | Space / Left click | Shoot (hold) - uses 1 bullet per shot |
 
 Keyboard-only? Use the arrow keys (or just don't touch the mouse): you then aim in the direction you walk, with the same smooth turning. Moving the mouse switches back to mouse aim.
@@ -70,6 +70,18 @@ Pick **PvP deathmatch** when creating a room and set *Kills to win* (0 = endless
 - Free-for-all: shoot the other players; no zombies. Weapons and heals still spawn on the map and respawn every ~25s.
 - **Respawn:** when you are killed you respawn after **10 seconds** at the spawn point farthest from your enemies, with a 2s shield (you blink; shooting ends it).
 - **Bots:** the host can click **+ Add bot** in the room lobby (and remove them with the x on their chip). Bots path-find around walls, hunt the nearest player, strafe, grab better weapons and heal themselves. The room's *Bot skill* (difficulty) controls their aim and reaction time. Bots count toward the max players.
+
+## Settings, leaving and reconnecting
+
+- The gear button (top right, on the menu, in the room lobby and in game; **Esc** in game) opens Settings: **camera panning** (default 40%; the camera leans toward your mouse; 0 turns it off), volume and mute. They are saved in your browser.
+- In game the panel also has **Leave game**, and for the host **End game for everyone**.
+- If your connection drops or you refresh the page, you can come back: the server holds your seat for 90 seconds and resumes the game when you reconnect (the seat is tied to the browser tab). While you are away you stay in the arena and can be hurt.
+- The Katana now does half its old damage (13).
+- Every kill gives +20% move speed for 10 seconds.
+
+## Team deathmatch
+
+When creating a PvP room, choose **PvP team deathmatch (Red vs Blue)**. Players are balanced across the two teams (switch with the button in the room lobby), bots fill the smaller team, there is no friendly fire, and the first team to the kill limit wins.
 
 ## Admin: maps and items
 

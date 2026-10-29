@@ -10,7 +10,7 @@ const DEFAULT_ITEMS = [
   { id: 'bandage', name: 'Bandage', type: 'heal', builtin: true, heal: 25, color: '#f1f1f1' },
   { id: 'medkit', name: 'Medkit', type: 'heal', builtin: true, heal: 60, color: '#ff4d4d' },
   { id: 'sword', name: 'Sword', type: 'weapon', melee: true, builtin: true, damage: 40, rate: 2.3, range: 2.2, arc: 1.8, pellets: 1, spread: 0, pierce: 0, color: '#c9d6df' },
-  { id: 'katana', name: 'Katana', type: 'weapon', melee: true, builtin: true, damage: 26, rate: 4, range: 2.5, arc: 1.4, pellets: 1, spread: 0, pierce: 0, color: '#e0e7ff' },
+  { id: 'katana', name: 'Katana', type: 'weapon', melee: true, builtin: true, damage: 13, rate: 4, range: 2.5, arc: 1.4, pellets: 1, spread: 0, pierce: 0, color: '#e0e7ff' },
   { id: 'greatsword', name: 'Greatsword', type: 'weapon', melee: true, builtin: true, damage: 90, rate: 1.1, range: 2.9, arc: 2.3, pellets: 1, spread: 0, pierce: 0, color: '#f4a261' },
   { id: 'vest', name: 'Light Vest', type: 'armor', builtin: true, amount: 40, color: '#4cc9f0' },
   { id: 'plate', name: 'Heavy Armor', type: 'armor', builtin: true, amount: 80, color: '#9d4edd' },

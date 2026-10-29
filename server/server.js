@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { Room, TICK_HZ, DIFF, ACC_COUNT } = require('./game');
+const { Room, TICK_HZ, DIFF, ACC_COUNT, FIT_COUNT } = require('./game');
 const { DEFAULT_ITEMS, buildDefaultMaps, sanitizeMap, sanitizeItem, cleanName } = require('./content');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -29,9 +29,15 @@ function loadStore() {
   if (!store.maps.length) store.maps = buildDefaultMaps();
   if (!store.items.some((i) => i.id === 'pistol')) store.items.unshift(DEFAULT_ITEMS[0]);
   if (store.items.length < 2) store.items = DEFAULT_ITEMS.map((i) => ({ ...i }));
+  // balance tweak: katana damage halved (once; later admin edits are kept)
+  if (!store.seeded.includes('katana-v2')) {
+    const k = store.items.find((i) => i.id === 'katana');
+    if (k && k.builtin && k.damage === 26) k.damage = 13;
+    store.seeded.push('katana-v2');
+  }
   // items added in later versions are seeded once into existing data files (and can then be deleted by the admin)
   for (const d of DEFAULT_ITEMS) {
-    if (!['ammo', 'sword', 'katana', 'greatsword'].includes(d.id) || store.seeded.includes(d.id)) continue;
+    if (!['ammo', 'sword', 'katana', 'greatsword', 'vest', 'plate'].includes(d.id) || store.seeded.includes(d.id)) continue;
     if (!store.items.some((i) => i.id === d.id)) store.items.push({ ...d });
     store.seeded.push(d.id);
   }
@@ -173,6 +179,26 @@ function lobbySay(msg) {
   const s = JSON.stringify(msg);
   for (const c of conns.values()) if (!c.room && c.named) c.raw(s);
 }
+// ---------- reconnecting ----------
+// When a connection drops during a game the player keeps their seat for RECONNECT_GRACE ms. The browser remembers a
+// token (per tab) and sends it in "hello"; if it matches, the new connection takes over the seat. A page refresh works the
+// same way, even if the old socket has not been noticed as closed yet.
+const RECONNECT_GRACE = 90000;
+const sessions = new Map(); // token -> { room, player }
+const liveByToken = new Map(); // token -> connection
+function dropPlayer(room, p) {
+  room.leave(p.conn);
+  if (!room.players.size) rooms.delete(room.id);
+  pushRooms();
+}
+function takeOver(c, room, p, old) {
+  conns.delete(c.id);
+  c.id = p.id; c.name = p.name; c.room = room; c.player = p;
+  conns.set(c.id, c);
+  p.conn = c;
+  delete p.dcAt;
+  if (old) { old.replaced = true; old.room = null; old.player = null; try { old.ws.close(); } catch (e) { /* ignore */ } }
+}
 function leaveRoom(c) {
   const r = c.room;
   if (!r) return;
@@ -194,9 +220,21 @@ wss.on('connection', (ws, req) => {
   conns.set(c.id, c);
   ws.on('pong', () => { c.alive = true; });
   ws.on('close', () => {
-    leaveRoom(c);
-    conns.delete(c.id);
     ipCount.set(ip, Math.max(0, (ipCount.get(ip) || 1) - 1));
+    if (c.token && liveByToken.get(c.token) === c) liveByToken.delete(c.token);
+    if (conns.get(c.id) === c) conns.delete(c.id);
+    if (c.replaced) return; // a newer connection took over this player
+    const r = c.room, p = c.player;
+    if (r && p && r.state !== 'lobby' && c.token) {
+      // mid-game: keep the seat so the player can come back
+      const stub = { id: p.id, name: p.name, raw() {}, send() {}, dc: true, room: r, player: p };
+      p.conn = stub; p.shoot = false; p.dcAt = Date.now();
+      sessions.set(c.token, { room: r, player: p });
+      c.room = null; c.player = null;
+      pushRooms();
+      return;
+    }
+    leaveRoom(c);
   });
   ws.on('error', () => {});
   ws.on('message', (data) => {
@@ -216,7 +254,26 @@ function onMessage(c, m) {
       c.name = cleanName(m.name, 14) || 'Survivor' + (100 + (c.id % 900));
       c.named = true;
       c.acc = Math.max(0, Math.min(ACC_COUNT - 1, Math.round(Number(m.acc)) || 0));
-      c.send({ t: 'hello_ok', id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
+      c.fit = Math.max(0, Math.min(FIT_COUNT - 1, Math.round(Number(m.fit)) || 0));
+      // coming back? (same token as a dropped or about-to-be-replaced connection)
+      const tok = typeof m.token === 'string' ? m.token.slice(0, 40) : '';
+      let back = null;
+      if (tok && !c.player) {
+        const old = liveByToken.get(tok);
+        if (old && old !== c && old.room && old.player) back = { room: old.room, player: old.player, old };
+        else {
+          const s = sessions.get(tok);
+          if (s && s.room.players.get(s.player.id) === s.player) back = { room: s.room, player: s.player, old: null };
+        }
+      }
+      if (back) {
+        c.token = tok;
+        sessions.delete(tok);
+        takeOver(c, back.room, back.player, back.old);
+      } else if (!c.token) c.token = crypto.randomBytes(12).toString('hex');
+      liveByToken.set(c.token, c);
+      c.send({ t: 'hello_ok', dash: 1, teams: 1, token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
+      if (back) { back.room.resume(back.player); pushRooms(); return; }
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;
     }
@@ -231,6 +288,7 @@ function onMessage(c, m) {
         difficulty: DIFF[m.difficulty] ? m.difficulty : 'normal',
         maxPlayers: Math.min(8, Math.max(1, Math.round(Number(m.max)) || 4)),
         mode: m.mode === 'pvp' ? 'pvp' : 'coop',
+        teams: m.mode === 'pvp' && m.teams === true,
         allowed: Array.isArray(m.weapons) ? m.weapons.filter((x) => typeof x === 'string').slice(0, 60) : undefined,
         start: typeof m.start === 'string' ? m.start : '',
         deathDrop: m.drops !== false,
@@ -252,9 +310,12 @@ function onMessage(c, m) {
     }
     case 'acc': {
       c.acc = Math.max(0, Math.min(ACC_COUNT - 1, Math.round(Number(m.v)) || 0));
-      if (c.player && c.room) { c.player.acc = c.acc; if (c.room.state === 'lobby') c.room.sendRoom(); }
+      c.fit = Math.max(0, Math.min(FIT_COUNT - 1, Math.round(Number(m.f)) || 0));
+      if (c.player && c.room) { c.player.acc = c.acc; c.player.fit = c.fit; if (c.room.state === 'lobby') c.room.sendRoom(); }
       return;
     }
+    case 'endgame': if (c.room && c.player && c.room.hostId === c.id) { c.room.endByHost(); pushRooms(); } return;
+    case 'team': if (c.room && c.player) c.room.setTeam(c.player, Number(m.team)); return;
     case 'addbot': {
       if (!c.room || !c.player) return;
       const err = c.room.addBot(c.id);
@@ -286,6 +347,12 @@ function onMessage(c, m) {
 
 // game loop + heartbeat
 setInterval(() => { for (const r of rooms.values()) r.tick(); }, 1000 / TICK_HZ);
+setInterval(() => {
+  for (const [tok, s] of [...sessions]) {
+    if (s.room.players.get(s.player.id) !== s.player) { sessions.delete(tok); continue; }
+    if (Date.now() - s.player.dcAt > RECONNECT_GRACE || s.room.state === 'lobby') { sessions.delete(tok); dropPlayer(s.room, s.player); }
+  }
+}, 2000);
 setInterval(() => {
   for (const c of conns.values()) {
     if (!c.alive) { c.ws.terminate(); continue; }

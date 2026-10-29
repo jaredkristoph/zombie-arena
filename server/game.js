@@ -5,9 +5,12 @@ const TICK_HZ = 20;
 const DT = 1 / TICK_HZ;
 const PLAYER_R = 0.38, PLAYER_SPEED = 5.2, PLAYER_HP = 100, BAG_MAX = 4;
 const PICK_R = 1.6, GRAVE_R = 1.5, REVIVE_SECONDS = 30, BREAK_SECONDS = 8, MAX_ALIVE = 45;
-const AMMO_START = 90, AMMO_MAX = 240, WAVE_AMMO = 25, AMMO_PICK_R = 0.95, ACC_COUNT = 14;
-// sprint (Shift): fast but tiring, and you can't shoot while doing it
-const STAM_MAX = 100, SPRINT_MULT = 1.4, SPRINT_DRAIN = 30, STAM_REGEN = 14, SPRINT_DELAY = 1, STAM_RESUME = 30;
+const AMMO_START = 90, AMMO_MAX = 240, WAVE_AMMO = 25, AMMO_PICK_R = 0.95, ACC_COUNT = 35, FIT_COUNT = 20;
+const TEAM_COLORS = ['#ff595e', '#3a86ff'], TEAM_NAMES = ['Red', 'Blue'];
+// all weapon damage is scaled down so fights last longer; armor soaks part of every hit until it is used up
+const DMG_SCALE = 0.7, ARMOR_MAX = 100, ARMOR_ABSORB = 0.6;
+// dash (Shift): a quick forward roll, invincible for 1 second, then a cooldown. `stam` doubles as the dash charge (0..100).
+const STAM_MAX = 100, DASH_TIME = 0.55, DASH_MULT = 2.4, KILL_BOOST = 1.2, KILL_BOOST_TIME = 10, DASH_INV = 1, DASH_CD = 3;
 const RESPAWN_SECONDS = 10, SPAWN_PROTECT = 2, PVP_ITEM_EVERY = 25, MAX_BOTS = 7;
 const BOT_NAMES = ['Rex', 'Nova', 'Blitz', 'Vex', 'Ghost', 'Rogue', 'Viper', 'Echo'];
 // bot skill per difficulty: aim error (rad), turn speed (rad/s), reaction delay (s)
@@ -55,6 +58,7 @@ class Room {
     this.maxPlayers = cfg.maxPlayers;
     this.mode = cfg.mode === 'pvp' ? 'pvp' : 'coop';
     this.killLimit = Math.max(0, Math.min(200, Math.round(Number(cfg.killLimit)) || 0)); // pvp only, 0 = endless
+    this.teams = this.mode === 'pvp' && cfg.teams === true; // team deathmatch: Red vs Blue, no friendly fire
     this.botSeq = 0;
     this.reviveSeconds = cfg.reviveSeconds || REVIVE_SECONDS;
     this.W = this.map.w;
@@ -127,13 +131,13 @@ class Room {
     return {
       id: this.id, name: this.name, map: this.map.name, waves: this.waves, difficulty: this.difficulty,
       max: this.maxPlayers, count: this.players.size, state: this.state, host: this.hostId,
-      mode: this.mode, killLimit: this.killLimit, bots: this.botCount(), drops: this.deathDrop, start: this.startWeapon, weapons: [...this.allowed],
+      mode: this.mode, teams: this.teams, killLimit: this.killLimit, bots: this.botCount(), drops: this.deathDrop, start: this.startWeapon, weapons: [...this.allowed],
     };
   }
   sendRoom() {
     this.broadcast({
       t: 'room', room: this.info(),
-      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, color: p.color, bot: p.bot ? 1 : 0, acc: p.acc })),
+      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, color: p.color, bot: p.bot ? 1 : 0, acc: p.acc, fit: p.fit, team: this.teams ? p.team : -1 })),
     });
   }
   initMsg(p) {
@@ -163,10 +167,20 @@ class Room {
     const p = this.join(conn);
     p.bot = true;
     p.acc = Math.floor(rand() * ACC_COUNT);
+    p.fit = Math.floor(rand() * FIT_COUNT);
     p.ai = { path: [], pathT: 0, tgt: null, seeT: 0, strafe: rand() < 0.5 ? 1 : -1, strafeT: 1, dest: null, aimErr: 0, errT: 0 };
     this.sendRoom();
     return null;
   }
+  foe(p, q) { return q.id !== p.id && (!this.teams || q.team !== p.team); }
+  setTeam(p, team) {
+    if (!this.teams || this.state !== 'lobby') return;
+    team = team === 1 ? 1 : 0;
+    if (p.team === team) return;
+    p.team = team; p.color = TEAM_COLORS[team];
+    this.sendRoom();
+  }
+  teamScore(t) { let n = 0; for (const q of this.players.values()) if (q.team === t) n += q.kills; return n; }
   removeBot(by, id) {
     if (this.state !== 'lobby' || by !== this.hostId) return;
     const p = this.players.get(id);
@@ -178,11 +192,19 @@ class Room {
   // ---------- membership ----------
   join(conn) {
     const used = new Set([...this.players.values()].map((p) => p.color));
-    const color = COLORS.find((c) => !used.has(c)) || COLORS[this.players.size % COLORS.length];
+    let color = COLORS.find((c) => !used.has(c)) || COLORS[this.players.size % COLORS.length];
+    let team = 0;
+    if (this.teams) { // join the smaller team
+      const n = [0, 0];
+      for (const q of this.players.values()) n[q.team]++;
+      team = n[1] < n[0] ? 1 : 0;
+      color = TEAM_COLORS[team];
+    }
     const p = {
+      team,
       id: conn.id, name: conn.name, color, conn, x: 0, y: 0, a: 0, hp: PLAYER_HP, weapon: this.startWeapon, bag: [],
       dead: false, cd: 0, shoot: false, kills: 0, seq: 0, budget: 0.3, lastIn: Date.now(), gsent: -1, deaths: 0,
-      rs: 0, inv: 0, aimSet: false, ammo: AMMO_START, stam: STAM_MAX, exh: false, sprinting: false, sDelay: 0, acc: (conn.acc | 0) % ACC_COUNT,
+      rs: 0, inv: 0, aimSet: false, ammo: AMMO_START, stam: STAM_MAX, exh: false, sprinting: false, sDelay: 0, dashT: 0, dashLeft: 0, boostT: 0, dinv: 0, acc: (conn.acc | 0) % ACC_COUNT, fit: (conn.fit | 0) % FIT_COUNT, armor: 0,
     };
     this.players.set(p.id, p);
     if (this.hostId == null) this.hostId = p.id;
@@ -216,6 +238,23 @@ class Room {
     if (this.mode === 'coop' && this.state === 'playing' && !this.alivePlayers().length) this.end('defeat');
   }
 
+  // a player whose connection came back (see server.js): resend whatever they need to pick up where they left off
+  resume(p) {
+    p.gsent = -1; p.lastIn = Date.now(); p.budget = 0.3;
+    if (this.state === 'playing') p.conn.send(this.initMsg(p));
+    else if (this.state === 'over' && this.lastOver) p.conn.send(this.lastOver);
+    p.conn.send({ t: 'chatlog', msgs: this.chatLog });
+    this.say(p.name + ' reconnected.');
+    this.sendRoom();
+  }
+  // host pressed "End game"
+  endByHost() {
+    if (this.state !== 'playing') return;
+    const h = this.players.get(this.hostId);
+    this.say((h ? h.name : 'The host') + ' ended the game.');
+    this.end('ended');
+  }
+
   // ---------- game flow ----------
   resetWorld() {
     this.zombies = [];
@@ -235,11 +274,11 @@ class Room {
     const sp = this.mode === 'pvp' ? this.respawnSpot(p) : this.map.playerSpawns[Math.floor(rand() * this.map.playerSpawns.length)];
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0;
   }
   // pvp respawn: the spawn point farthest from every living enemy
   respawnSpot(p) {
-    const enemies = this.alivePlayers().filter((q) => q.id !== p.id);
+    const enemies = this.alivePlayers().filter((q) => this.foe(p, q));
     let best = null, bd = -1;
     for (const sp of this.map.playerSpawns.concat(this.map.zombieSpawns)) {
       const cx = sp.x + 0.5, cy = sp.y + 0.5;
@@ -254,7 +293,7 @@ class Room {
     const sp = this.respawnSpot(p);
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0;
     this.ev.push(['r', p.id]);
   }
   startGame() {
@@ -267,18 +306,19 @@ class Room {
     this.spawnMapItems(true);
     for (const p of this.players.values()) p.conn.send(this.initMsg(p));
     if (this.mode === 'pvp') {
-      this.say(`Deathmatch! ${this.killLimit ? 'First to ' + this.killLimit + ' kills wins' : 'Endless'} on ${this.map.name}. You respawn ${RESPAWN_SECONDS}s after dying. Press Enter to chat.`);
+      this.say(`${this.teams ? 'Team deathmatch (Red vs Blue)!' : 'Deathmatch!'} ${this.killLimit ? 'First to ' + this.killLimit + ' kills wins' : 'Endless'} on ${this.map.name}. You respawn ${RESPAWN_SECONDS}s after dying. Press Enter to chat.`);
     } else {
       this.say(`Game on! ${this.waves ? this.waves + ' waves' : 'Endless'} on ${this.map.name} (${this.difficulty}). Wave 1 in ${this.timer}s. Press Enter to chat.`);
     }
     this.sendRoom();
   }
-  end(result, winner) {
+  end(result, winner, winTeam = -1) {
     if (this.state !== 'playing') return;
     this.state = 'over';
     this.overT = 14;
-    const stats = [...this.players.values()].map((p) => ({ name: p.name, color: p.color, kills: p.kills, deaths: p.deaths })).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-    this.broadcast({ t: 'over', result, wave: this.wave, stats, winner: winner ? winner.name : '', winnerId: winner ? winner.id : 0, killLimit: this.killLimit });
+    const stats = [...this.players.values()].map((p) => ({ name: p.name, color: p.color, kills: p.kills, deaths: p.deaths, team: this.teams ? p.team : -1 })).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+    this.lastOver = { t: 'over', result, wave: this.wave, stats, winner: winner ? winner.name : '', winnerId: winner ? winner.id : 0, killLimit: this.killLimit, teams: this.teams, winTeam, teamScore: this.teams ? [this.teamScore(0), this.teamScore(1)] : null };
+    this.broadcast(this.lastOver);
     this.sendRoom();
   }
   backToLobby() {
@@ -292,7 +332,7 @@ class Room {
   lootIds() {
     return Object.keys(this.itemDefs).filter((k) => {
       const d = this.itemDefs[k];
-      return d.type === 'heal' || (d.type === 'weapon' && this.allowed.has(k) && k !== this.startWeapon);
+      return d.type === 'heal' || d.type === 'armor' || (d.type === 'weapon' && this.allowed.has(k) && k !== this.startWeapon);
     });
   }
   itemOk(id) {
@@ -333,22 +373,23 @@ class Room {
     const dt = Math.min(Math.max(Number(m.dt) || 0, 0), 100) / 1000;
     const use = Math.min(dt, p.budget);
     p.budget -= use;
-    // sprint: only while moving, with stamina, and not while exhausted. Stamina is spent per second actually sprinted.
-    const wantSprint = m.sp === 1 || m.sp === true;
-    let sprintT = 0;
+    if (len > 0.01) { dx /= len; dy /= len; }
+    // dash (Shift): needs a full charge. It is just a short burst of fast running (DASH_MULT x speed for DASH_TIME seconds of
+    // movement) plus DASH_INV seconds of invincibility; the client draws it as a roll.
+    if ((m.dh === 1 || m.dh === true) && p.dashT <= 0 && p.stam >= STAM_MAX * 0.85) {
+      p.dashT = DASH_TIME; p.dashLeft = DASH_TIME; p.dinv = DASH_INV; p.stam = 0;
+      this.ev.push(['D', p.id]);
+      // tell everyone right now (like a shot) so every screen plays the same dash at the same moment: where it starts and which way it goes
+      const ddx = len > 0.01 ? dx : Math.cos(p.a), ddy = len > 0.01 ? dy : Math.sin(p.a);
+      this.broadcast({ t: 'dd', id: p.id, x: r2(p.x), y: r2(p.y), dx: r2(ddx), dy: r2(ddy), b: p.boostT > 0 ? 1 : 0 });
+    }
     if (len > 0.01 && use > 0) {
-      dx /= len; dy /= len;
       if (aim === null) p.a = Math.atan2(dy, dx);
-      if (wantSprint && !p.exh && p.stam > 0) {
-        sprintT = Math.min(use, p.stam / SPRINT_DRAIN);
-        p.stam -= sprintT * SPRINT_DRAIN;
-        p.sDelay = SPRINT_DELAY;
-        if (p.stam <= 0.001) { p.stam = 0; p.exh = true; }
-      }
-      const dist = PLAYER_SPEED * (sprintT * SPRINT_MULT + (use - sprintT));
+      let boost = 0;
+      if ((m.sp === 1 || m.sp === true) && p.dashLeft > 0) { boost = Math.min(use, p.dashLeft); p.dashLeft -= boost; }
+      const dist = PLAYER_SPEED * (p.boostT > 0 ? KILL_BOOST : 1) * (boost * DASH_MULT + (use - boost));
       this.move(p, dx * dist, dy * dist, PLAYER_R);
     }
-    p.sprinting = sprintT > 0 && !p.exh;
   }
   act(p, k) {
     if (this.state !== 'playing' || p.dead) return;
@@ -364,6 +405,9 @@ class Room {
       if (def.type === 'ammo') {
         if (p.ammo >= AMMO_MAX) { p.conn.send({ t: 'toast', text: 'Ammo full' }); return; }
         p.ammo = Math.min(AMMO_MAX, p.ammo + (def.amount || 40));
+      } else if (def.type === 'armor') {
+        if (p.armor >= ARMOR_MAX) { p.conn.send({ t: 'toast', text: 'Armor full' }); return; }
+        p.armor = Math.min(ARMOR_MAX, p.armor + (def.amount || 40));
       } else if (def.type === 'heal') {
         if (p.bag.length >= BAG_MAX) { p.conn.send({ t: 'toast', text: 'Bag full (max ' + BAG_MAX + ')' }); return; }
         p.bag.push(def.id);
@@ -396,7 +440,7 @@ class Room {
     p.cd = 1 / w.rate;
     p.inv = 0;
     const pvp = this.mode === 'pvp';
-    const targets = pvp ? this.alivePlayers().filter((q) => q.id !== p.id && !(q.inv > 0)) : this.zombies.slice();
+    const targets = pvp ? this.alivePlayers().filter((q) => this.foe(p, q) && !(q.inv > 0 || q.dinv > 0)) : this.zombies.slice();
     const arc = w.arc || 1.7, half = arc / 2;
     let hit = 0;
     for (const z of targets) {
@@ -421,7 +465,7 @@ class Room {
     p.inv = 0; // shooting ends spawn protection
     const pvp = this.mode === 'pvp';
     // targets: other players that are alive and not spawn-protected (pvp) or zombies (co-op)
-    const targets = pvp ? this.alivePlayers().filter((q) => q.id !== p.id && !(q.inv > 0)) : this.zombies;
+    const targets = pvp ? this.alivePlayers().filter((q) => this.foe(p, q) && !(q.inv > 0 || q.dinv > 0)) : this.zombies;
     const tr = pvp ? PLAYER_R + 0.1 : 0;
     for (let i = 0; i < w.pellets; i++) {
       const ang = p.a + (rand() - 0.5) * 2 * w.spread;
@@ -449,18 +493,24 @@ class Room {
       this.ev.push(['s', r2(p.x), r2(p.y), r2(ang), r2(len), hit, w.id]);
     }
   }
+  // damage to a player: armor soaks ARMOR_ABSORB of it until it is gone
+  hurt(v, dmg) {
+    const soak = Math.min(v.armor, dmg * ARMOR_ABSORB);
+    v.armor -= soak;
+    v.hp -= dmg - soak;
+  }
   damagePlayer(v, dmg, killer) {
     if (v.dead) return;
-    v.hp -= dmg;
+    this.hurt(v, dmg * DMG_SCALE);
     this.ev.push(['h', v.id]);
     if (v.hp <= 0) this.die(v, killer);
   }
   damageZombie(z, dmg, p) {
     if (z.dead) return;
-    z.hp -= dmg;
+    z.hp -= dmg * DMG_SCALE;
     if (z.hp > 0) return;
     z.dead = true;
-    p.kills++;
+    p.kills++; p.boostT = KILL_BOOST_TIME;
     this.ev.push(['k', r2(z.x), r2(z.y), z.type]);
     if (rand() < 0.1 * this.d.drop + (z.type === 2 ? 0.5 : 0)) {
       const ids = this.lootIds();
@@ -480,7 +530,7 @@ class Room {
   }
   // pvp: no graves, you come back on your own after RESPAWN_SECONDS
   diePvp(p, killer) {
-    p.dead = true; p.hp = 0; p.shoot = false; p.deaths++; p.rs = RESPAWN_SECONDS; p.inv = 0;
+    p.dead = true; p.hp = 0; p.shoot = false; p.deaths++; p.rs = RESPAWN_SECONDS; p.inv = 0; p.dashT = 0; p.boostT = 0; p.dinv = 0;
     if (this.deathDrop) {
       // room option: whatever you carried, plus one random gun / heal item and some ammo, falls where you died
       if (p.weapon !== this.startWeapon) this.addGround(p.x, p.y, p.weapon, 30);
@@ -492,9 +542,14 @@ class Room {
     p.bag = [];
     this.ev.push(['d', p.id]);
     const k = killer && killer.id !== p.id ? killer : null;
-    if (k) k.kills++;
+    if (k) { k.kills++; k.boostT = KILL_BOOST_TIME; }
     this.say(k ? `${k.name} eliminated ${p.name}` : `${p.name} died`);
-    if (k && this.killLimit && k.kills >= this.killLimit) {
+    if (this.teams) {
+      if (k && this.killLimit && this.teamScore(k.team) >= this.killLimit) {
+        this.say(`${TEAM_NAMES[k.team]} team wins the deathmatch!`);
+        this.end('pvp', k, k.team);
+      }
+    } else if (k && this.killLimit && k.kills >= this.killLimit) {
       this.say(`${k.name} wins the deathmatch!`);
       this.end('pvp', k);
     }
@@ -543,7 +598,7 @@ class Room {
     // nearest living enemy + line of sight
     let tgt = null, bd = Infinity;
     for (const q of this.players.values()) {
-      if (q === p || q.dead) continue;
+      if (q === p || q.dead || !this.foe(p, q)) continue;
       const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2;
       if (d < bd) { bd = d; tgt = q; }
     }
@@ -566,7 +621,7 @@ class Room {
       for (const g of this.ground) {
         const def = this.itemDefs[g.item];
         if (!def) continue;
-        const want = def.type === 'ammo' ? p.ammo < 45 && !w.melee : def.type === 'heal' ? p.hp < 80 && p.bag.length < BAG_MAX : dps(def) > cur * 1.15;
+        const want = def.type === 'armor' ? p.armor < 40 : def.type === 'ammo' ? p.ammo < 45 && !w.melee : def.type === 'heal' ? p.hp < 80 && p.bag.length < BAG_MAX : dps(def) > cur * 1.15;
         if (!want) continue;
         const d = (g.x - p.x) ** 2 + (g.y - p.y) ** 2;
         if (d < bs) { bs = d; item = g; }
@@ -589,7 +644,7 @@ class Room {
       my = uy * radial + ux * ai.strafe * 0.9;
       want = Math.atan2(tgt.y - p.y, tgt.x - p.x) + ai.aimErr;
       const diff = Math.abs(normAng(want - p.a));
-      shoot = (w.melee || p.ammo > 0) && ai.seeT >= sk.react && dist < w.range * 0.95 && diff < 0.2 && !(tgt.inv > 0);
+      shoot = (w.melee || p.ammo > 0) && ai.seeT >= sk.react && dist < w.range * 0.95 && diff < 0.2 && !(tgt.inv > 0 || tgt.dinv > 0);
     } else {
       let goal = null;
       if (item) goal = [item.x, item.y];
@@ -648,18 +703,14 @@ class Room {
         continue;
       }
       if (p.inv > 0) p.inv -= DT;
-      if (p.sprinting && Date.now() - p.lastIn > 250) p.sprinting = false;
-      if (!p.sprinting) {
-        if ((p.sDelay -= DT) <= 0) {
-          p.sDelay = 0;
-          p.stam = Math.min(STAM_MAX, p.stam + STAM_REGEN * DT);
-          if (p.exh && p.stam >= STAM_RESUME) p.exh = false;
-        }
-      } else p.cd = Math.max(p.cd, 0.2); // weapon is lowered while running
+      if (p.dinv > 0) p.dinv -= DT;
+      if (p.boostT > 0) p.boostT -= DT;
+      if (p.dashT > 0) p.dashT -= DT; // (rolling: no shooting)
+      else p.stam = Math.min(STAM_MAX, p.stam + (STAM_MAX / DASH_CD) * DT);
       if (p.ammo < AMMO_MAX) this.autoPickAmmo(p);
       if (p.bot) this.botThink(p);
       p.cd -= DT;
-      if (p.shoot && p.cd <= 0 && !p.sprinting && this.state === 'playing') this.fire(p);
+      if (p.shoot && p.cd <= 0 && !(p.dashT > 0) && this.state === 'playing') this.fire(p);
     }
     if (this.state !== 'playing') { this.ev = []; return; }
     if (pvp) {
@@ -772,9 +823,9 @@ class Room {
           } else { z.x = sx; z.y = sy; }
         }
       }
-      if (dist <= z.r + PLAYER_R + 0.2 && z.cd <= 0 && !tgt.dead) {
+      if (dist <= z.r + PLAYER_R + 0.2 && z.cd <= 0 && !tgt.dead && !(tgt.dinv > 0)) {
         z.cd = 0.8;
-        tgt.hp -= z.dmg * this.d.dmg;
+        this.hurt(tgt, z.dmg * this.d.dmg);
         this.ev.push(['h', tgt.id]);
         if (tgt.hp <= 0) this.die(tgt);
       }
@@ -811,7 +862,7 @@ class Room {
         const p = this.players.get(g.pid);
         this.graves.splice(i, 1);
         if (!p) continue;
-        p.dead = false; p.hp = PLAYER_HP / 2; p.x = g.x; p.y = g.y; p.weapon = 'pistol'; p.bag = []; p.cd = 0.5; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false;
+        p.dead = false; p.hp = PLAYER_HP / 2; p.x = g.x; p.y = g.y; p.weapon = 'pistol'; p.bag = []; p.cd = 0.5; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.armor = 0;
         this.ev.push(['r', p.id]);
         this.say(`${rescuer.name} revived ${p.name}!`);
       }
@@ -821,7 +872,7 @@ class Room {
   sendSnapshot() {
     const base = {
       w: { n: this.wave, of: this.waves, ph: this.phase === 'wave' ? 1 : 0, tm: Math.ceil(Math.max(0, this.timer)), left: this.queue + this.zombies.length },
-      p: [...this.players.values()].map((p) => [p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0]),
+      p: [...this.players.values()].map((p) => [p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 || p.dinv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0, Math.round(p.armor), p.dashT > 0 ? 1 : 0, p.boostT > 0 ? 1 : 0]),
       z: this.zombies.map((z) => [z.id, r2(z.x), r2(z.y), z.type, Math.max(1, Math.round((z.hp / z.maxHp) * 100))]),
       gr: this.graves.map((g) => [g.pid, r2(g.x), r2(g.y), Math.round(g.prog * 10) / 10, g.name]),
       ev: this.ev,
@@ -837,4 +888,4 @@ class Room {
   }
 }
 
-module.exports = { STAM_MAX, SPRINT_MULT, SPRINT_DRAIN, STAM_REGEN, ACC_COUNT, AMMO_START, AMMO_MAX, Room, TICK_HZ, DT, DIFF, REVIVE_SECONDS, RESPAWN_SECONDS };
+module.exports = { FIT_COUNT, DMG_SCALE, STAM_MAX, DASH_TIME, DASH_MULT, KILL_BOOST, KILL_BOOST_TIME, DASH_INV, DASH_CD, ACC_COUNT, AMMO_START, AMMO_MAX, Room, TICK_HZ, DT, DIFF, REVIVE_SECONDS, RESPAWN_SECONDS };

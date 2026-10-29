@@ -148,7 +148,7 @@ function clearMap() {
 
 // ---------- characters ----------
 // Head accessories. Keep ACC_NAMES in the same order/length as ACC_COUNT in server/game.js.
-export const ACC_NAMES = ['None', 'Cap', 'Cowboy Hat', 'Top Hat', 'Crown', 'Headband', 'Bunny Ears', 'Devil Horns', 'Halo', 'Army Helmet', 'Mohawk', 'Antenna', 'Pirate Hat', 'Wizard Hat', 'Beanie', 'Chef Hat', 'Viking Helmet', 'Cat Ears', 'Sombrero', 'Police Cap', 'Flower Crown', 'Jester Hat', 'Headphones', 'Unicorn', 'Pumpkin'];
+export const ACC_NAMES = ['None', 'Cap', 'Cowboy Hat', 'Top Hat', 'Crown', 'Headband', 'Bunny Ears', 'Devil Horns', 'Halo', 'Army Helmet', 'Mohawk', 'Antenna', 'Pirate Hat', 'Wizard Hat', 'Beanie', 'Chef Hat', 'Viking Helmet', 'Cat Ears', 'Sombrero', 'Police Cap', 'Flower Crown', 'Jester Hat', 'Headphones', 'Unicorn', 'Pumpkin', 'Santa Hat', 'Party Hat', 'Propeller Cap', 'Graduation Cap', 'Straw Hat', 'Fez', 'Space Helmet', 'Samurai Helmet', 'Flame Crown', 'Rubber Duck'];
 function accessoryParts(i, color) {
   const b = box;
   switch (i) {
@@ -176,12 +176,22 @@ function accessoryParts(i, color) {
     case 22: return [b(0.62, 0.06, 0.08, '#222222', 0, 1.67, 0), ...[-1, 1].flatMap((x) => [b(0.05, 0.34, 0.08, '#222222', x * 0.3, 1.5, 0), b(0.12, 0.24, 0.24, '#e63946', x * 0.33, 1.3, 0)])];
     case 23: return [b(0.5, 0.1, 0.5, '#f8f9fa', 0, 1.66, 0), b(0.08, 0.32, 0.08, '#ffd23f', 0, 1.9, 0.1), b(0.1, 0.22, 0.3, '#ff70a6', 0, 1.76, -0.12), b(0.1, 0.16, 0.2, '#4cc9f0', 0, 1.72, -0.28)];
     case 24: return [b(0.56, 0.34, 0.56, '#f97316', 0, 1.74, 0), b(0.09, 0.14, 0.09, '#2d6a4f', 0, 1.98, 0), b(0.1, 0.1, 0.04, '#2a1a05', -0.13, 1.76, 0.29), b(0.1, 0.1, 0.04, '#2a1a05', 0.13, 1.76, 0.29)];
+    case 25: return [b(0.5, 0.14, 0.5, '#d62828', 0, 1.67, 0), b(0.36, 0.18, 0.36, '#d62828', 0, 1.8, 0), b(0.2, 0.16, 0.2, '#d62828', 0.05, 1.95, 0), b(0.58, 0.1, 0.58, '#ffffff', 0, 1.6, 0), b(0.1, 0.1, 0.1, '#ffffff', 0.1, 2.05, 0)];
+    case 26: return [b(0.4, 0.14, 0.4, '#ff70a6', 0, 1.65, 0), b(0.3, 0.16, 0.3, '#ffd23f', 0, 1.79, 0), b(0.2, 0.16, 0.2, '#4cc9f0', 0, 1.93, 0), b(0.1, 0.12, 0.1, '#ffffff', 0, 2.07, 0)];
+    case 27: return [b(0.5, 0.17, 0.5, '#e63946', 0, 1.68, 0), b(0.25, 0.17, 0.5, '#3a86ff', 0, 1.69, 0), b(0.04, 0.12, 0.04, '#cccccc', 0, 1.82, 0), b(0.6, 0.03, 0.1, '#ffd23f', 0, 1.9, 0), b(0.1, 0.03, 0.6, '#ffd23f', 0, 1.9, 0)];
+    case 28: return [b(0.5, 0.12, 0.5, '#151515', 0, 1.66, 0), b(0.76, 0.05, 0.76, '#151515', 0, 1.75, 0), b(0.05, 0.3, 0.05, '#ffd23f', 0.32, 1.58, 0.22), b(0.09, 0.07, 0.09, '#ffd23f', 0.32, 1.42, 0.22)];
+    case 29: return [b(1.0, 0.04, 1.0, '#e9c46a', 0, 1.64, 0), b(0.5, 0.24, 0.5, '#f2d388', 0, 1.77, 0), b(0.52, 0.06, 0.52, '#c0392b', 0, 1.69, 0)];
+    case 30: return [b(0.44, 0.3, 0.44, '#b5171e', 0, 1.74, 0), b(0.34, 0.04, 0.34, '#7a0e13', 0, 1.9, 0), b(0.04, 0.3, 0.04, '#ffd23f', 0.2, 1.78, 0.2), b(0.07, 0.07, 0.07, '#ffd23f', 0.2, 1.6, 0.2)];
+    case 31: return [b(0.64, 0.34, 0.64, '#e5e7eb', 0, 1.74, 0), b(0.6, 0.16, 0.05, '#38bdf8', 0, 1.5, 0.3), b(0.08, 0.18, 0.08, '#ef4444', 0.32, 1.7, 0), b(0.56, 0.06, 0.56, '#9ca3af', 0, 1.58, 0)];
+    case 32: return [b(0.56, 0.22, 0.56, '#2b2d42', 0, 1.7, 0), b(0.7, 0.07, 0.7, '#1b1d2e', 0, 1.6, 0), b(0.06, 0.34, 0.06, '#ffd23f', -0.16, 1.98, 0.1), b(0.06, 0.34, 0.06, '#ffd23f', 0.16, 1.98, 0.1), b(0.2, 0.06, 0.06, '#ffd23f', 0, 1.74, 0.29)];
+    case 33: return [b(0.5, 0.1, 0.5, '#7a2e0b', 0, 1.64, 0), ...[[-0.18, 0.22], [0, 0.34], [0.18, 0.22], [-0.09, 0.3], [0.09, 0.3]].map(([x, h], k) => b(0.12, h, 0.12, ['#ff6b00', '#ffd23f', '#ff3b30'][k % 3], x, 1.7 + h / 2, 0))];
+    case 34: return [b(0.44, 0.22, 0.44, '#ffd23f', 0, 1.7, 0), b(0.26, 0.16, 0.26, '#ffd23f', 0, 1.88, -0.03), b(0.22, 0.07, 0.14, '#ff8c1a', 0, 1.88, 0.16), b(0.05, 0.05, 0.04, '#111111', -0.1, 1.9, 0.12), b(0.05, 0.05, 0.04, '#111111', 0.1, 1.9, 0.12)];
     default: return [];
   }
 }
 
 // ---- outfits (shirt / pants / extras). 0 = your team colour. Keep FIT_NAMES.length == FIT_COUNT in server/game.js
-export const FIT_NAMES = ['Team Colour', 'Hoodie', 'Red Jacket', 'Camo', 'Striped Tee', 'Punk', 'Lab Coat', 'Knight', 'Overalls', 'Ninja'];
+export const FIT_NAMES = ['Team Colour', 'Hoodie', 'Red Jacket', 'Camo', 'Striped Tee', 'Punk', 'Lab Coat', 'Knight', 'Overalls', 'Ninja', 'Pirate', 'Astronaut', 'Cowboy', 'Doctor', 'Prisoner', 'Chef', 'Superhero', 'Gold Armor', 'Hawaiian', 'Tuxedo'];
 function outfit(i, team) {
   const b = box;
   switch (i) {
@@ -194,6 +204,16 @@ function outfit(i, team) {
     case 7: return { shirt: '#8d99ae', pants: '#4a4e69', parts: [b(0.2, 0.14, 0.3, '#adb5bd', -0.35, 1.06, 0), b(0.2, 0.14, 0.3, '#adb5bd', 0.35, 1.06, 0), b(0.5, 0.42, 0.04, '#ced4da', 0, 0.82, 0.21)] };
     case 8: return { shirt: '#f4d35e', pants: '#2a6fdb', parts: [b(0.38, 0.36, 0.04, '#2a6fdb', 0, 0.62, 0.21), b(0.07, 0.42, 0.04, '#2a6fdb', -0.14, 0.95, 0.21), b(0.07, 0.42, 0.04, '#2a6fdb', 0.14, 0.95, 0.21)] };
     case 9: return { shirt: '#15151f', pants: '#15151f', parts: [b(0.5, 0.1, 0.46, '#e63946', 0, 1.1, 0), b(0.1, 0.32, 0.06, '#e63946', 0.2, 0.9, -0.22), b(0.46, 0.2, 0.04, '#15151f', 0, 1.2, 0.23)] };
+    case 10: return { shirt: '#3d2b1f', pants: '#1f1f1f', parts: [b(0.58, 0.07, 0.42, '#f8f9fa', 0, 0.9, 0), b(0.58, 0.1, 0.42, '#c0392b', 0, 0.45, 0), b(0.1, 0.1, 0.04, '#ffd23f', 0, 0.45, 0.22), b(0.58, 0.07, 0.42, '#f8f9fa', 0, 0.68, 0)] };
+    case 11: return { shirt: '#f1f5f9', pants: '#e2e8f0', parts: [b(0.3, 0.3, 0.06, '#94a3b8', 0, 0.85, 0.22), b(0.08, 0.08, 0.04, '#ef4444', -0.1, 0.95, 0.26), b(0.08, 0.08, 0.04, '#22c55e', 0.1, 0.95, 0.26), b(0.2, 0.34, 0.14, '#cbd5e1', 0, 0.9, -0.28), b(0.6, 0.06, 0.44, '#f97316', 0, 0.48, 0)] };
+    case 12: return { shirt: '#b5651d', pants: '#3b5b92', parts: [b(0.58, 0.28, 0.42, '#7b4a1a', 0, 0.95, 0), b(0.5, 0.06, 0.44, '#3b2a14', 0, 0.45, 0), b(0.12, 0.08, 0.04, '#ffd23f', 0, 0.45, 0.22), b(0.14, 0.08, 0.04, '#e63946', 0, 1.12, 0.22)] };
+    case 13: return { shirt: '#2a9d8f', pants: '#2a9d8f', parts: [b(0.62, 0.7, 0.44, '#ffffff', 0, 0.74, 0), b(0.1, 0.1, 0.04, '#e63946', 0.14, 0.95, 0.24), b(0.3, 0.06, 0.04, '#2a9d8f', 0, 1.06, 0.24), b(0.1, 0.5, 0.04, '#2a9d8f', 0, 0.7, 0.24)] };
+    case 14: return { shirt: '#f97316', pants: '#f97316', parts: [0.58, 0.8, 1.02].map((y) => b(0.6, 0.06, 0.44, '#111111', 0, y, 0)).concat([b(0.22, 0.12, 0.04, '#ffffff', 0.12, 0.9, 0.22)]) };
+    case 15: return { shirt: '#f8f9fa', pants: '#1f2937', parts: [b(0.58, 0.14, 0.42, '#f8f9fa', 0, 1.08, 0), b(0.07, 0.07, 0.04, '#111111', -0.1, 0.9, 0.22), b(0.07, 0.07, 0.04, '#111111', 0.1, 0.9, 0.22), b(0.07, 0.07, 0.04, '#111111', -0.1, 0.7, 0.22), b(0.07, 0.07, 0.04, '#111111', 0.1, 0.7, 0.22), b(0.6, 0.06, 0.44, '#9ca3af', 0, 0.5, 0)] };
+    case 16: return { shirt: '#1d4ed8', pants: '#dc2626', parts: [b(0.56, 0.78, 0.04, '#dc2626', 0, 0.78, -0.24), b(0.22, 0.22, 0.04, '#ffd23f', 0, 0.9, 0.22), b(0.1, 0.1, 0.04, '#dc2626', 0, 0.9, 0.25), b(0.6, 0.06, 0.44, '#ffd23f', 0, 0.45, 0)] };
+    case 17: return { shirt: '#d4a017', pants: '#8a6a12', parts: [b(0.24, 0.14, 0.36, '#f4c430', -0.38, 1.06, 0), b(0.24, 0.14, 0.36, '#f4c430', 0.38, 1.06, 0), b(0.3, 0.3, 0.04, '#fff2a8', 0, 0.85, 0.22), b(0.6, 0.06, 0.44, '#7a5a0a', 0, 0.46, 0)] };
+    case 18: return { shirt: '#f59e0b', pants: '#0ea5a4', parts: [b(0.12, 0.12, 0.04, '#ef4444', -0.15, 0.95, 0.22), b(0.12, 0.12, 0.04, '#ffffff', 0.12, 0.8, 0.22), b(0.12, 0.12, 0.04, '#7c3aed', -0.05, 0.62, 0.22), b(0.12, 0.12, 0.04, '#22c55e', 0.15, 1.05, 0.22), b(0.3, 0.1, 0.04, '#fde68a', 0, 1.14, 0.22)] };
+    case 19: return { shirt: '#111827', pants: '#111827', parts: [b(0.22, 0.6, 0.04, '#ffffff', 0, 0.8, 0.22), b(0.18, 0.08, 0.05, '#dc2626', 0, 1.06, 0.24), b(0.06, 0.06, 0.04, '#111827', 0, 0.8, 0.25), b(0.06, 0.06, 0.04, '#111827', 0, 0.66, 0.25), b(0.62, 0.06, 0.44, '#1f2937', 0, 0.45, 0)] };
     default: return { shirt: team, pants: '#2b2b44', parts: [] };
   }
 }
@@ -266,14 +286,14 @@ export function createPreview(canvas, color, acc, fit = 0) {
   };
 }
 // turn > 0 eases the visible facing toward `a` (exponential, shortest way round); 0 = use `a` as is
-export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, protectedNow = false, melee = false) {
+export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, protectedNow = false, melee = false, rolling = false) {
   v.root.position.set(x, 0, y);
   if (turn > 0 && v.ang !== undefined && !v.wasDead) v.ang = lerpAngle(v.ang, a, 1 - Math.exp(-dt * turn));
   else v.ang = a;
   v.wasDead = dead;
   v.blink = (v.blink || 0) + dt;
   v.model.rotation.y = Math.PI / 2 - v.ang;
-  v.model.visible = !dead && (!protectedNow || Math.floor(v.blink * 9) % 2 === 0); // spawn protection: blink
+  v.model.visible = !dead && (rolling || v.rollTimer > 0 || !protectedNow || Math.floor(v.blink * 9) % 2 === 0); // spawn protection: blink
   if (gunColor !== v.gunColor) { v.gunColor = gunColor; v.gun.material = mat(gunColor); }
   v.swing = Math.max(0, (v.swing || 0) - dt * 5.5);
   if (melee !== v.melee) { // swap between a gun and a sword model
@@ -289,7 +309,16 @@ export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, p
   const s = moving ? Math.sin(v.phase) : 0;
   v.legL.rotation.x = s * 0.8; v.legR.rotation.x = -s * 0.8;
   v.model.position.y = moving ? Math.abs(s) * 0.07 : 0;
+  // dash roll: a forward somersault
+  if (v.rollTimer > 0) { v.rollTimer -= dt; rolling = true; }
+  v.rollT = rolling ? Math.min(1, (v.rollT || 0) + dt / 0.55) : 0;
+  v.model.rotation.order = 'YXZ';
+  v.model.rotation.x = rolling ? v.rollT * Math.PI * 2 : 0;
+  if (rolling) v.model.position.y = 0.6 * Math.sin(v.rollT * Math.PI);
 }
+export function playerView(id) { return players.get(id); } // (tests)
+// roll animation for a player, started by the server's dash event (same way shots are shown)
+export function startRoll(id) { const v = players.get(id); if (v && !(v.rollTimer > 0)) v.rollTimer = 0.55; }
 export function removePlayer(id) { removeView(players, id); }
 export function swingPlayer(id) { const v = players.get(id); if (v) v.swing = 1; }
 // sword slash effect: a flat arc on the ground that fades quickly
@@ -439,7 +468,29 @@ export function setGraves(list, reviveSeconds, graveR) {
   }
 }
 
+// ---------- blood on the floor ----------
+const BLOOD_N = 140;
+let bloodMeshes = null, bloodI = 0;
+const BLOOD_GEO = new THREE.CircleGeometry(1, 10).rotateX(-Math.PI / 2);
+export function addBlood(x, y, size = 1, n = 6) {
+  if (!bloodMeshes) {
+    const mats = [0x5c0a10, 0x7a0e16, 0x4a070c].map((c) => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85, depthWrite: false }));
+    bloodMeshes = [];
+    for (let i = 0; i < BLOOD_N; i++) { const m = new THREE.Mesh(BLOOD_GEO, mats[i % 3]); m.visible = false; m.position.y = 0.015; entGroup.add(m); bloodMeshes.push(m); }
+  }
+  for (let k = 0; k < n; k++) {
+    const m = bloodMeshes[bloodI]; bloodI = (bloodI + 1) % BLOOD_N;
+    const a = Math.random() * Math.PI * 2, d = k === 0 ? 0 : Math.random() * 0.6 * size;
+    const r = (k === 0 ? 0.42 : 0.1 + Math.random() * 0.2) * size;
+    m.position.x = x + Math.cos(a) * d; m.position.z = y + Math.sin(a) * d;
+    m.scale.set(r * (0.8 + Math.random() * 0.6), 1, r * (0.8 + Math.random() * 0.6));
+    m.rotation.y = Math.random() * Math.PI;
+    m.visible = true;
+  }
+}
+
 export function clearEntities() {
+  if (bloodMeshes) for (const m of bloodMeshes) m.visible = false;
   for (const m of [players, zombies, groundViews, graveViews]) for (const id of [...m.keys()]) removeView(m, id);
   for (const t of tracers) { t.life = 0; t.mesh.visible = false; }
   for (const t of slashes) { t.life = 0; t.mesh.visible = false; }
