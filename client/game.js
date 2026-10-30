@@ -836,7 +836,7 @@ function updateHud(me, myGrave) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 
-const BUILD = 'b35'; // shown in the corner so you can check every window runs the same version
+const BUILD = 'b36'; // shown in the corner so you can check every window runs the same version
 // ---------- settings (gear button, top right; on the menu, in the room lobby and in game) ----------
 S.dashSim = new Map(); S.dashFade = new Map();
 globalThis.__za = S; S.W3 = W3; S.blockedAt = (x, y) => blocked(S.grid, x, y, PLAYER_R); // (debug / tests)

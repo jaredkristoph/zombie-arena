@@ -31,7 +31,7 @@ const BOT_SKILL = {
   nightmare: { err: 0.06, turn: 14, react: 0.22, spd: 0.95 },
 };
 const normAng = (a) => { a = (a + Math.PI) % (Math.PI * 2); if (a < 0) a += Math.PI * 2; return a - Math.PI; };
-const COLORS = ['#ff595e', '#1982c4', '#8ac926', '#ffca3a', '#6a4c93', '#ff924c', '#4dd0e1', '#f06292'];
+const COLORS = ['#ff595e', '#1982c4', '#8ac926', '#ffca3a', '#6a4c93', '#ff924c', '#4dd0e1', '#f06292', '#b5e48c', '#e76f51', '#9d4edd', '#2a9d8f', '#f4a261', '#90e0ef', '#c77dff', '#d00000', '#70e000', '#ffd60a', '#00b4d8', '#ff70a6'];
 
 const DIFF = {
   easy: { hp: 0.7, spd: 0.85, dmg: 0.6, cnt: 0.7, drop: 1.4 },
