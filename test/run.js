@@ -62,16 +62,16 @@ function testRevive() {
   r.die(pa);
   assert.ok(pa.dead && r.graves.length === 1);
   pb.x = 10.5; pb.y = 10.8;
-  for (let i = 0; i < Math.round(29 / DT); i++) r.tick();
-  assert.ok(pa.dead, 'still dead after 29s');
+  for (let i = 0; i < Math.round(14 / DT); i++) r.tick();
+  assert.ok(pa.dead, 'still dead after 14s');
   pb.x = 5; pb.y = 5; // step off: progress should decay, not complete
   for (let i = 0; i < Math.round(2 / DT); i++) r.tick();
-  assert.ok(pa.dead && r.graves[0].prog < 29, 'progress decays when nobody stands there');
+  assert.ok(pa.dead && r.graves[0].prog < 14, 'progress decays when nobody stands there');
   pb.x = 10.5; pb.y = 10.8;
   for (let i = 0; i < Math.round(40 / DT); i++) r.tick();
   assert.ok(!pa.dead && pa.hp === 50 && r.graves.length === 0, 'revived with half HP');
   assert.ok(a.msgs.some((m) => m.t === 'chat' && /revived/.test(m.text)), 'revive announced in chat');
-  ok('standing on a grave for 30s revives (decays when you leave)');
+  ok('standing on a grave for 15s revives (decays when you leave)');
 }
 
 function testSelfCannotRevive() {
@@ -302,6 +302,106 @@ function testHeavyWeapons() {
   const gat = speed('gatling'), pis = speed('pistol'), snp = speed('sniper');
   assert.ok(Math.abs(gat / pis - 0.82 / 0.98) < 0.03 && snp < pis && gat < snp, 'heavier guns are slower: pistol ' + pis.toFixed(2) + ' sniper ' + snp.toFixed(2) + ' gatling ' + gat.toFixed(2));
   ok('gatling overheats + jams, grenade launcher (ammo cost, reload, explodes on contact), katana runs 2x, gun weight slows you');
+}
+
+function testFlamethrower() {
+  const r = mkRoom({ waves: 0 });
+  const a = fakeConn(1, 'Ann');
+  const p = r.join(a);
+  r.startGame(); r.timer = 99999;
+  p.x = 19.5; p.y = 19.5; p.a = 0; p.weapon = 'flamethrower'; p.ammo = 240;
+  const z = { id: 950, type: 2, x: 22.5, y: 19.5, hp: 5000, maxHp: 5000, spd: 0, dmg: 0, r: 0.62, cd: 0, side: 1, dead: false };
+  const far = { id: 951, type: 2, x: 30.5, y: 19.5, hp: 5000, maxHp: 5000, spd: 0, dmg: 0, r: 0.62, cd: 0, side: 1, dead: false };
+  const side = { id: 952, type: 2, x: 19.5, y: 22.5, hp: 5000, maxHp: 5000, spd: 0, dmg: 0, r: 0.62, cd: 0, side: 1, dead: false };
+  r.zombies.push(z, far, side);
+  r.onInput(p, { seq: 1, dx: 0, dy: 0, dt: 0, sh: 1 });
+  for (let i = 0; i < 20 * 2; i++) { r.tick(); p.heat = 0; }
+  assert.ok(z.hp < 5000 && !(z.burn > 0), 'flame hurts the target but 2s is not enough to ignite');
+  for (let i = 0; i < 20 * 1.5; i++) { r.tick(); p.heat = 0; }
+  assert.ok(z.burn > 0, 'after 3s of unbroken fire the target burns');
+  assert.strictEqual(far.hp, 5000, 'out of range is untouched');
+  assert.strictEqual(side.hp, 5000, 'outside the cone is untouched');
+  r.onInput(p, { seq: 2, dx: 0, dy: 0, dt: 0, sh: 0 });
+  const hp0 = z.hp;
+  for (let i = 0; i < 20 * 2; i++) r.tick();
+  assert.ok(z.hp < hp0 - 10, 'burn keeps damaging after the flame stops: ' + (hp0 - z.hp));
+  for (let i = 0; i < 20 * 5; i++) r.tick();
+  assert.ok(!(z.burn > 0), 'burn ends');
+  // the gun overheats like the gatling
+  p.heat = 0; p.lock = 0; r.onInput(p, { seq: 3, dx: 0, dy: 0, dt: 0, sh: 1 });
+  for (let i = 0; i < 20 * 8; i++) r.tick();
+  assert.ok(p.lock > 0 || p.heat > 0.3, 'flamethrower builds heat');
+  ok('flamethrower: cone + range, 3s of fire ignites, burn lingers then ends, heats up');
+}
+function testDefense() {
+  const r = mkRoom({ waves: 12, difficulty: 'normal' });
+  const a = fakeConn(1, 'Ann');
+  const p = r.join(a);
+  r.startGame();
+  assert.strictEqual(r.timer, 30, '30 seconds to prepare before wave 1');
+  const crates = r.ground.filter((g) => g.item === 'crate');
+  assert.strictEqual(crates.length, 4, 'exactly 4 supply crates at the start: ' + crates.length);
+  // opening a crate gives turrets / barricades / mines
+  p.x = crates[0].x; p.y = crates[0].y; r.autoPickup(p);
+  assert.ok(p.turrets === 1 || p.walls === 5, 'crate = 1 turret or 5 barricades');
+  r.timer = 99999; p.hp = 1e9;
+  // twice as many zombies, bosses on waves 5 and 10
+  r.wave = 0; r.startWave();
+  assert.ok(r.queue >= 17 && r.bosses === 0, 'double zombies on wave 1: ' + r.queue);
+  r.wave = 4; r.startWave(); assert.strictEqual(r.bosses, 1, 'one boss on wave 5');
+  r.zombies = []; for (let i = 0; i < 400 && r.bosses > 0; i++) { r.spawnT = 0; r.updateWave(); }
+  assert.ok(r.zombies.some((z) => z.type === 3 && z.maxHp > 1000), 'boss spawned');
+  r.zombies = []; r.wave = 9; r.startWave(); assert.strictEqual(r.bosses, 2, 'two bosses on wave 10');
+  r.zombies = []; r.queue = 0; r.bosses = 0; r.phase = 'break'; r.timer = 99999;
+  // turret: plant, it shoots zombies, zombies chew it
+  p.x = 20.5; p.y = 20.5; p.a = 0; p.turrets = 2; p.walls = 3; p.mines = 2;
+  r.act(p, 'turret'); assert.strictEqual(r.turrets.length, 1); assert.strictEqual(p.turrets, 1);
+  const tu = r.turrets[0];
+  const z = { id: 801, type: 0, x: tu.x + 5, y: tu.y, hp: 40, maxHp: 40, spd: 0, dmg: 10, r: 0.38, cd: 0, side: 1, dead: false };
+  r.zombies.push(z);
+  for (let i = 0; i < 90 && !z.dead; i++) r.tick();
+  assert.ok(z.dead && tu.ammo < 160, 'turret killed a zombie and used ammo');
+  const z2 = { id: 802, type: 0, x: tu.x + 0.8, y: tu.y, hp: 1e9, maxHp: 1e9, spd: 0, dmg: 10, r: 0.38, cd: 0, side: 1, dead: false };
+  r.zombies = [z2]; const hp0 = tu.hp;
+  for (let i = 0; i < 40; i++) r.tick();
+  assert.ok(tu.hp < hp0, 'zombies hurt turrets: ' + hp0 + ' -> ' + tu.hp);
+  r.zombies = [];
+  // barricade: blocks walking, bullets pass over it, removable, zombies break it
+  p.x = 10.5; p.y = 30.5; p.a = 0; r.act(p, 'wall');
+  assert.strictEqual(r.walls.size, 1); assert.strictEqual(p.walls, 2);
+  const [wi] = [...r.walls.keys()], wx = wi % r.W, wy = (wi / r.W) | 0;
+  assert.ok(r.solid(wx, wy) && !r.sight(wx, wy), 'blocks walking, not bullets');
+  const e = { x: wx - 0.5, y: wy + 0.5 }; r.move(e, 1, 0, 0.38); assert.ok(e.x < wx, 'cannot walk through the barricade');
+  // a full line of barricades across the map (the zombie cannot go around), bait on the far side
+  for (let y = 1; y < 39; y++) { const i = y * r.W + 12; if (!r.solidArr[i]) { r.walls.set(i, { hp: 160, maxHp: 160 }); r.solidArr[i] = 1; } }
+  const zz = { id: 803, type: 0, x: 11.5, y: 30.5, hp: 1e9, maxHp: 1e9, spd: 1.7, dmg: 10, r: 0.38, cd: 0, side: 1, dead: false };
+  p.x = 14.5; p.y = 30.5; r.zombies = [zz];
+  const total0 = [...r.walls.values()].reduce((n, w) => n + w.hp, 0);
+  for (let i = 0; i < 80; i++) r.tick();
+  const total1 = [...r.walls.values()].reduce((n, w) => n + w.hp, 0);
+  assert.ok(total1 < total0, 'zombies chew through a barricade that blocks them: ' + total0 + ' -> ' + total1);
+  for (const i of [...r.walls.keys()]) if (i !== wi) { r.walls.delete(i); r.solidArr[i] = r.baseSolid[i]; }
+  r.zombies = [];
+  // a short barricade with a way round: zombies walk around it and leave it alone
+  r.walls.clear(); for (const i of [...r.walls.keys()]) r.solidArr[i] = r.baseSolid[i];
+  for (let y = 17; y <= 21; y++) { const i = y * r.W + 28; r.walls.set(i, { hp: 160, maxHp: 160 }); r.solidArr[i] = 1; }
+  const zr = { id: 805, type: 0, x: 25.5, y: 19.5, hp: 1e9, maxHp: 1e9, spd: 1.7, dmg: 10, r: 0.38, cd: 0, side: 1, dead: false };
+  p.x = 31.5; p.y = 19.5; r.zombies = [zr]; p.hp = 1e9; r.turrets = []; r.mines = [];
+  for (let i = 0; i < 240; i++) r.tick();
+  assert.ok([...r.walls.values()].every((w) => w.hp === 160), 'zombies do not chew a barricade while a path round it exists');
+  assert.ok(zr.x > 28.5, 'the zombie walked round the barricade: x=' + zr.x.toFixed(1));
+  for (const i of [...r.walls.keys()]) r.solidArr[i] = r.baseSolid[i];
+  r.walls.clear(); r.zombies = [];
+  p.x = 10.5; p.y = 30.5; p.a = 0; r.walls.clear(); r.solidArr[wi] = 0; p.walls = 2; r.act(p, 'wall');
+  const [wi2] = [...r.walls.keys()]; p.x = (wi2 % r.W) - 0.8; p.y = ((wi2 / r.W) | 0) + 0.5;
+  r.act(p, 'remove'); assert.ok(r.walls.size === 0 && !r.solidArr[wi2] && p.walls === 2, 'X removes it and gives it back');
+  // mine: arms, then blows up a zombie that walks over it
+  p.x = 25.5; p.y = 10.5; p.mines = 2; r.act(p, 'mine'); assert.strictEqual(r.mines.length, 1);
+  const zm = { id: 804, type: 0, x: 25.5, y: 10.6, hp: 40, maxHp: 40, spd: 0, dmg: 0, r: 0.38, cd: 0, side: 1, dead: false };
+  p.x = 5.5; p.y = 5.5; r.zombies = [zm];
+  for (let i = 0; i < 40; i++) r.tick();
+  assert.ok(zm.dead && r.mines.length === 0, 'mine killed the zombie');
+  ok('co-op: 30s prep + crates, 2x zombies, bosses on waves 5/10, turrets (hp, ammo), barricades (shoot over, removable, breakable), mines');
 }
 
 function testMovementCollision() {
@@ -610,7 +710,7 @@ async function testNetwork() {
   const port = server.address().port;
 
   // admin API
-  assert.strictEqual((await api(port, 'GET', '/api/maps')).body.length, 2);
+  assert.strictEqual((await api(port, 'GET', '/api/maps')).body.length, 3);
   assert.strictEqual((await api(port, 'PUT', '/api/admin/items', { name: 'X', type: 'heal' })).code, 401);
   const item = await api(port, 'PUT', '/api/admin/items', { name: 'Mega Gun', type: 'weapon', damage: 50, rate: 6, color: '#00ff00' }, 'sekret');
   assert.strictEqual(item.code, 200);
@@ -725,7 +825,7 @@ async function testNetwork() {
 }
 
 (async () => {
-  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testTerrainAndHeadshots(); testDoorsBushesGrenades(); testDeadTownConnected(); testHeavyWeapons(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testTeams(); testArmorAndDamage(); testLook();
+  testMaps(); testRevive(); testSelfCannotRevive(); testWavesAndVictory(); testDefeat(); testCombatAndItems(); testMovementCollision(); testTerrainAndHeadshots(); testDoorsBushesGrenades(); testDeadTownConnected(); testHeavyWeapons(); testDefense(); testFlamethrower(); testPvp(); testBotsFight(); testAmmo(); testAccessories(); testSwordsAndLoadout(); testSprint(); testTeams(); testArmorAndDamage(); testLook();
   await testNetwork();
   console.log('\nAll ' + passed + ' checks passed');
   process.exit(0);

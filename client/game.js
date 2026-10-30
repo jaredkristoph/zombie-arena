@@ -304,7 +304,7 @@ function toast(text) {
 function startGame(m) {
   S.inGame = true; S.map = m.map; S.items = m.items; S.revive = m.revive; S.pickR = m.pickR; S.graveR = m.graveR;
   S.teams = !!(m.room && m.room.teams); S.mode = m.room && m.room.mode === 'pvp' ? 'pvp' : 'coop'; S.killLimit = (m.room && m.room.killLimit) || 0; S.respawn = m.respawn || 10;
-  S.mouse.down = false; S.sentAim = 1e9; // force the first input to carry our aim
+  S.building = false; S.mouse.down = false; S.sentAim = 1e9; // force the first input to carry our aim
   document.body.classList.toggle('mode-pvp', S.mode === 'pvp');
   S.grid = makeGrid(m.map);
   for (const i of m.doors || []) setDoorSolid(S.grid, i, true);
@@ -314,6 +314,7 @@ function startGame(m) {
   W3.clearAll();
   W3.buildMap(m.map);
   for (const i of m.doors || []) W3.setDoor(i, true);
+  for (const i of m.walls || []) { S.grid.solid[i] = 1; W3.setWall(i, true); }
   clearLabels();
   setScreen('game');
   unlockAudio();
@@ -360,6 +361,7 @@ function onSnapshot(m) {
   if (m.g) { S.groundList = m.g; W3.setGround(m.g, S.items); }
   S.graves = m.gr;
   W3.setGrenades(m.gn || []);
+  S.turretList = m.tu || []; W3.setTurrets(m.tu || []); W3.setMines(m.mn || []); W3.setWallHp(m.wl || []);
   W3.setGraves(m.gr, S.revive, S.graveR);
   S.wave = m.w;
   const sp = snap.p.get(S.id);
@@ -368,7 +370,7 @@ function onSnapshot(m) {
     if (sp[4] < S.lastHp && !me.dead) { $('hurt').style.opacity = 1; setTimeout(() => { $('hurt').style.opacity = 0; }, 120); W3.shake(0.35); }
     S.lastHp = sp[4];
     me.hp = sp[4]; me.weapon = sp[5]; me.dead = !!sp[6]; me.bag = sp[7]; me.kills = sp[8]; me.rs = sp[9] || 0;
-    me.armor = sp[15] || 0; me.nades = sp[18] || 0; me.heat = sp[20] || 0; me.lock = sp[21] === 1;
+    me.armor = sp[15] || 0; me.nades = sp[18] || 0; me.heat = sp[20] || 0; me.lock = sp[21] === 1; me.turrets = sp[22] || 0; me.walls = sp[23] || 0; me.mines = sp[24] || 0;
     if (sp[17] === 1 && !S.boost && !me.dead) toast('Kill! +20% speed for 10s');
     S.boost = sp[17] === 1;
     if (sp[13] !== undefined) { if (sp[13] < S.stam - 12 || me.dead) S.stam = sp[13]; if (me.dead) { S.stam = STAM_MAX; S.dashT = 0; } } me.ammo = sp[12] === undefined ? 0 : sp[12];
@@ -397,6 +399,22 @@ function headshotFlash() {
   sfx('hit', 1);
   W3.shake(0.25);
 }
+const me0 = () => S.me;
+// the barricade tile in front of me (same maths as the server) and whether it is free
+function buildSpot() {
+  const me = S.me, g = S.grid, tx = Math.floor(me.vx + Math.cos(me.a) * 1.3), ty = Math.floor(me.vy + Math.sin(me.a) * 1.3), idx = ty * g.w + tx;
+  let ok = !(tx < 1 || ty < 1 || tx >= g.w - 1 || ty >= g.h - 1 || g.solid[idx] || g.doors.includes(idx));
+  if (ok) {
+    const near = (x, y, r) => { const nx = Math.max(tx, Math.min(x, tx + 1)), ny = Math.max(ty, Math.min(y, ty + 1)); return (x - nx) ** 2 + (y - ny) ** 2 < r * r; };
+    const snap = S.latest;
+    if (snap) {
+      for (const a of snap.p.values()) if (!a[6] && near(a[0] === S.id ? me.vx : a[1], a[0] === S.id ? me.vy : a[2], 0.46)) { ok = false; break; }
+      if (ok) for (const z of snap.z.values()) if (near(z[1], z[2], 0.46)) { ok = false; break; }
+      if (ok) for (const t of S.turretList || []) if (near(t[1], t[2], 0.46)) { ok = false; break; }
+    }
+  }
+  return { tx, ty, ok };
+}
 function distVol(x, y) {
   const d = Math.hypot(x - S.me.x, y - S.me.y);
   return clamp(1 - d / 22, 0, 1);
@@ -408,6 +426,12 @@ function fx(ev) {
       const def = S.items[wid], col = def ? def.color : '#ffffff';
       const dx = Math.cos(a), dy = Math.sin(a);
       // the gun's muzzle: 0.97 ahead and 0.3 to the right of the body centre (see buildPlayerModel)
+      if (def && def.flame) { // a stream of fire instead of a tracer
+        const mf0 = W3.muzzleForward(wid), sx = x + dx * mf0 + dy * 0.3, sy = y + dy * mf0 - dx * 0.3;
+        for (let k = 0; k < 3; k++) { const d = 0.3 + Math.random() * (len - 0.3); W3.burst(sx + dx * d, sy + dy * d, 0.8, Math.random() < 0.5 ? '#ff7b00' : '#ffd23f', 1, 1.2, 0.2 + d * 0.03, 0.3); }
+        if (performance.now() - S.shootSfxT > 70) { S.shootSfxT = performance.now(); sfx('shoot', distVol(x, y) * 0.35); }
+        break;
+      }
       const mf = W3.muzzleForward(wid), tx = x + dx * mf + dy * 0.3, ty = y + dy * mf - dx * 0.3;
       const far = len > mf + 0.05; // (a point-blank hit ends right at the muzzle)
       W3.tracer(tx, ty, far ? x + dx * len : tx + dx * 0.06, far ? y + dy * len : ty + dy * 0.06, col);
@@ -426,6 +450,13 @@ function fx(ev) {
       break;
     }
     case 'g': W3.blast(ev[1], ev[2], ev[3]); sfx('kill', distVol(ev[1], ev[2])); sfx('shoot', distVol(ev[1], ev[2]) * 0.9); break;
+    case 'b': W3.burst(ev[1], ev[2], 0.6, '#ff7b00', 4, 1.6, 0.14, 0.5); W3.burst(ev[1], ev[2], 1.0, '#ffd23f', 2, 1.2, 0.1, 0.4); break;
+    case 'W': S.grid.solid[ev[1]] = ev[2] ? 1 : 0; W3.setWall(ev[1], !!ev[2]); break;
+    case 'wh': { const x = (ev[1] % S.grid.w) + 0.5, y = Math.floor(ev[1] / S.grid.w) + 0.5; W3.burst(x, y, 0.6, '#b08968', 5, 2.5, 0.12, 0.35); sfx('hit', distVol(x, y) * 0.5); break; }
+    case 'q': { const [, , x, y, a, len] = ev, dx = Math.cos(a), dy = Math.sin(a); W3.tracer(x + dx * 0.55, y + dy * 0.55, x + dx * len, y + dy * len, '#4cc9f0'); W3.burst(x + dx * 0.6, y + dy * 0.6, 0.7, '#ffe27a', 3, 2, 0.14, 0.1); sfx('shoot', distVol(x, y) * 0.4); break; }
+    case 'th': break;
+    case 'X': W3.burst(ev[1], ev[2], 0.5, '#888888', 18, 4, 0.2, 0.6); W3.burst(ev[1], ev[2], 0.5, '#ff9f1c', 8, 3, 0.16, 0.4); sfx('kill', distVol(ev[1], ev[2]) * 0.8); break;
+    case 'P': W3.burst(ev[1], ev[2], 0.15, '#c9b896', 8, 2, 0.14, 0.4); sfx('pick', distVol(ev[1], ev[2])); break;
     case 'j': if (ev[1] === S.id) { toast('Gatling overheated! Cooling down...'); sfx('empty'); } break;
     case 't': sfx('dash', ev[1] === S.id ? 0.7 : 0.3); break;
     case 'D': if (ev[1] !== S.id) W3.startRoll(ev[1]); break; // (the 'dd' message normally got there first)
@@ -471,12 +502,22 @@ window.addEventListener('keydown', (e) => {
   switch (e.code) {
     case 'KeyE': send({ t: 'act', k: 'equip' }); break;
     case 'KeyF': send({ t: 'act', k: 'nade' }); break;
-    case 'KeyQ': send({ t: 'act', k: 'drop' }); break;
+    case 'KeyQ': S.building = false; send({ t: 'act', k: 'drop' }); break;
     case 'KeyG': send({ t: 'act', k: 'dropheal' }); break;
     case 'KeyH': send({ t: 'act', k: 'heal' }); break;
+    case 'KeyT': send({ t: 'act', k: 'turret' }); break;
+    case 'KeyB': { // first press: show where it would go (blue = fits, red = blocked); second press: place it
+      if (me0().dead) break;
+      if (!S.building) { if (!(me0().walls > 0)) { toast('No barricades. Open supply crates!'); break; } S.building = true; toast('Press B again to place, Esc to cancel'); break; }
+      const t = buildSpot();
+      if (t.ok) { send({ t: 'act', k: 'wall' }); S.building = false; } else toast('Blocked - move or aim somewhere else');
+      break;
+    }
+    case 'KeyN': send({ t: 'act', k: 'mine' }); break;
+    case 'KeyX': send({ t: 'act', k: 'remove' }); break;
     case 'KeyM': { const mu = toggleMute(); toast(mu ? 'Sound off' : 'Sound on'); S.set.mute = mu; $('set-mute').checked = mu; saveSettings(); break; }
     case 'Tab': cycleSpectate(e.shiftKey ? -1 : 1); e.preventDefault(); break;
-    case 'Escape': if (document.body.classList.contains('chat-open')) closeChat(); else toggleSettings(); break;
+    case 'Escape': if (S.building) { S.building = false; break; } if (document.body.classList.contains('chat-open')) closeChat(); else toggleSettings(); break;
     default:
   }
 });
@@ -705,10 +746,13 @@ function frame(now) {
   }
   for (const [k, l] of labels) if (k[0] === 'g' && !liveG.has(k)) { l.el.remove(); labels.delete(k); }
 
+  // barricade placement preview
+  if (S.building && (me.dead || !(me.walls > 0))) S.building = false;
+  if (S.building) { const t = buildSpot(); W3.setBuildGhost(t.tx, t.ty, t.ok); if (!prompt) prompt = t.ok ? '[B] place barricade here  (Esc cancel)' : 'Blocked - aim at a free tile  (Esc cancel)'; } else W3.setBuildGhost(null);
   // nearest item prompt
   if (!me.dead && !prompt) {
     let best = null, bd = S.pickR * S.pickR;
-    for (const g of S.groundList) { if (S.items[g[3]] && S.items[g[3]].type === 'ammo') continue; const d = (g[1] - me.vx) ** 2 + (g[2] - me.vy) ** 2; if (d < bd) { bd = d; best = g; } }
+    for (const g of S.groundList) { if (S.items[g[3]] && ['ammo', 'crate', 'turret', 'barricade', 'mine'].includes(S.items[g[3]].type)) continue; const d = (g[1] - me.vx) ** 2 + (g[2] - me.vy) ** 2; if (d < bd) { bd = d; best = g; } }
     if (best) { const def = S.items[best[3]]; if (def && def.type !== 'ammo') prompt = `[E] ${def.type === 'heal' || def.type === 'grenade' ? 'Pick up' : def.type === 'armor' ? 'Wear' : 'Equip'} ${def.name}${def.weight ? ` (${def.weight} kg, ${Math.round(weaponSpeed(def) * 100)}% speed)` : ''}`; }
   }
   if (!me.dead && !prompt && S.grid.doors.length) { // a door nearby
@@ -731,7 +775,7 @@ function frame(now) {
     S.specName = q && si ? si.name : '';
   }
   // camera panning: lean toward the mouse so you can see farther in the direction you aim (mouse aim only)
-  if (!me.dead && S.set.pan > 0 && S.aimMode === 'mouse' && S.mouse.has) {
+  if (!me.dead && !S.set.calm && S.set.pan > 0 && S.aimMode === 'mouse' && S.mouse.has) {
     const k = S.set.pan / 100;
     const dz = (n) => Math.sign(n) * Math.max(0, (Math.abs(n) - 0.12) / 0.88); // small dead zone in the middle of the screen
     cx += dz(clamp((S.mouse.x / (window.innerWidth || 1)) * 2 - 1, -1, 1)) * 7 * k;
@@ -755,7 +799,7 @@ function updateHud(me, myGrave) {
       setText('wave-sub', S.killLimit ? `First to ${S.killLimit} kills` : 'Endless - most kills wins bragging rights');
     }
   } else if (w.ph) { setText('wave-title', `WAVE ${w.n}${w.of ? ' / ' + w.of : ''}`); setText('wave-sub', `${w.left} zombies left`); }
-  else if (w.n === 0) { setText('wave-title', 'GET READY'); setText('wave-sub', `Wave 1 starts in ${w.tm}s`); }
+  else if (w.n === 0) { setText('wave-title', `PREPARE  ${w.tm}s`); setText('wave-sub', 'Open crates, plant turrets [T], barricades [B], mines [N]'); }
   else { setText('wave-title', `WAVE ${w.n} CLEARED`); setText('wave-sub', `Next wave in ${w.tm}s - revive friends & grab loot`); }
   $('hp-fill').style.width = clamp(me.hp, 0, 100) + '%';
   $('armor-bar').style.display = me.armor > 0 ? 'block' : 'none';
@@ -768,7 +812,7 @@ function updateHud(me, myGrave) {
   const melee = !!(def && def.melee);
   setText('ammo-info', melee ? 'Melee - no ammo needed' : `Ammo ${me.ammo | 0}` + (def && def.heat ? (me.lock ? '  JAMMED - cooling' : `  Heat ${me.heat | 0}%`) : '') + (def && def.ammoCost ? `  (${def.ammoCost} per shell)` : ''));
   $('ammo-info').classList.toggle('low', !melee && (me.ammo | 0) <= 15);
-  setText('bag-info', (me.bag ? `Heals x${me.bag}  [H]` : '') + (me.nades ? `${me.bag ? '  ' : ''}Grenades x${me.nades}  [F]` : ''));
+  setText('bag-info', [me.bag ? `Heals x${me.bag} [H]` : '', me.nades ? `Grenades x${me.nades} [F]` : '', me.turrets ? `Turrets x${me.turrets} [T]` : '', me.walls ? `Barricades x${me.walls} [B]` : '', me.mines ? `Mines x${me.mines} [N]` : '', (me.turrets || me.walls || me.mines) ? '[X] remove' : ''].filter(Boolean).join('  '));
   // players list
   let html = '';
   const plist = [...S.latest.hud];
@@ -792,17 +836,19 @@ function updateHud(me, myGrave) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 
-const BUILD = 'b29'; // shown in the corner so you can check every window runs the same version
+const BUILD = 'b35'; // shown in the corner so you can check every window runs the same version
 // ---------- settings (gear button, top right; on the menu, in the room lobby and in game) ----------
 S.dashSim = new Map(); S.dashFade = new Map();
 globalThis.__za = S; S.W3 = W3; S.blockedAt = (x, y) => blocked(S.grid, x, y, PLAYER_R); // (debug / tests)
-S.set = { pan: 40, vol: 80, mute: false };
+S.set = { pan: 40, vol: 80, mute: false, calm: false };
+try { if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) S.set.calm = true; } catch (e) { /* ignore */ }
 try { Object.assign(S.set, JSON.parse(localStorage.getItem('za-settings2') || '{}')); } catch (e) { /* ignore */ }
 function saveSettings() { try { localStorage.setItem('za-settings2', JSON.stringify(S.set)); } catch (e) { /* ignore */ } }
 function applySettings() {
   $('set-pan').value = S.set.pan; $('pan-val').textContent = S.set.pan + '%';
   $('set-vol').value = S.set.vol; $('vol-val').textContent = S.set.vol + '%';
   $('set-mute').checked = !!S.set.mute;
+  $('set-calm').checked = !!S.set.calm; document.body.classList.toggle('calm', !!S.set.calm); W3.setCalm(S.set.calm);
   setVolume(S.set.vol / 100); setMuted(S.set.mute);
 }
 function toggleSettings(force) {
@@ -818,6 +864,7 @@ $('set-close').onclick = () => toggleSettings(false);
 $('set-pan').oninput = () => { S.set.pan = Number($('set-pan').value); applySettings(); saveSettings(); };
 $('set-vol').oninput = () => { S.set.vol = Number($('set-vol').value); applySettings(); saveSettings(); };
 $('set-pan').onchange = $('set-vol').onchange = () => { document.activeElement && document.activeElement.blur && document.activeElement.blur(); };
+$('set-calm').onchange = () => { S.set.calm = $('set-calm').checked; applySettings(); saveSettings(); $('set-calm').blur(); };
 $('set-mute').onchange = () => { S.set.mute = $('set-mute').checked; applySettings(); saveSettings(); $('set-mute').blur(); };
 $('btn-leave-game').onclick = () => { toggleSettings(false); send({ t: 'leave' }); };
 $('btn-end-game').onclick = () => { toggleSettings(false); send({ t: 'endgame' }); };

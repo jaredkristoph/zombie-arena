@@ -38,10 +38,21 @@ function loadStore() {
   }
   // gun weights (once): heavier guns slow you down; the Gatling / Launcher speed tweaks now come from their weight
   if (!store.seeded.includes('weights-v1')) {
-    const W = { pistol: 1, smg: 2.5, shotgun: 3.5, rifle: 4, sniper: 6, gatling: 9, launcher: 7, sword: 2.5, katana: 1.2, greatsword: 6 };
+    const W = { pistol: 1, smg: 2.5, shotgun: 3.5, rifle: 4, sniper: 6, gatling: 9, flamethrower: 8, launcher: 7, sword: 2.5, katana: 1.2, greatsword: 6 };
     for (const i of store.items) if (i.builtin && W[i.id] !== undefined && i.weight === undefined) i.weight = W[i.id];
-    for (const id of ['gatling', 'launcher']) { const i = store.items.find((x) => x.id === id); if (i && i.builtin) delete i.move; }
+    for (const id of ['gatling', 'launcher', 'turret', 'barricade', 'mine', 'crate']) { const i = store.items.find((x) => x.id === id); if (i && i.builtin) delete i.move; }
     store.seeded.push('weights-v1');
+  }
+  // the zombie-defense map "Outpost" is added to existing data files once
+  if (!store.seeded.includes('outpost-v1')) {
+    if (!store.maps.some((m) => m.id === 'outpost')) store.maps.push(sanitizeMapKeep(buildDefaultMaps()[2]));
+    store.seeded.push('outpost-v1');
+  }
+  // Outpost v3: bigger fort, wide gaps, no doors (replaces the built-in copy once)
+  if (!store.seeded.includes('outpost-v3')) {
+    const fresh = sanitizeMapKeep(buildDefaultMaps()[2]), at = store.maps.findIndex((m) => m.id === 'outpost');
+    if (at >= 0 && store.maps[at].builtin) store.maps[at] = fresh;
+    store.seeded.push('outpost-v3');
   }
   // katana: walk 100% faster while it is in your hands (once)
   if (!store.seeded.includes('katana-run')) {
@@ -63,7 +74,7 @@ function loadStore() {
   }
   // items added in later versions are seeded once into existing data files (and can then be deleted by the admin)
   for (const d of DEFAULT_ITEMS) {
-    if (!['ammo', 'sword', 'katana', 'greatsword', 'vest', 'plate', 'grenade', 'gatling', 'launcher'].includes(d.id) || store.seeded.includes(d.id)) continue;
+    if (!['ammo', 'sword', 'katana', 'greatsword', 'vest', 'plate', 'grenade', 'gatling', 'flamethrower', 'launcher', 'turret', 'barricade', 'mine', 'crate'].includes(d.id) || store.seeded.includes(d.id)) continue;
     if (!store.items.some((i) => i.id === d.id)) store.items.push({ ...d });
     store.seeded.push(d.id);
   }
@@ -298,7 +309,7 @@ function onMessage(c, m) {
         takeOver(c, back.room, back.player, back.old);
       } else if (!c.token) c.token = crypto.randomBytes(12).toString('hex');
       liveByToken.set(c.token, c);
-      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b29', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
+      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b35', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
       if (back) { back.room.resume(back.player); pushRooms(); return; }
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;

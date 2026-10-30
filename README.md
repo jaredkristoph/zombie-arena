@@ -37,9 +37,12 @@ Keyboard-only? Use the arrow keys (or just don't touch the mouse): you then aim 
 ## Rules
 
 - **Lobby:** create a room (name, map, wave count, difficulty, max players) or join one. The host starts the game. People can also join a game in progress.
-- **Waves:** set any number of waves (1-99), or `0` for endless. More zombies, runners and tanks every wave; a tank boss every 5th wave.
+- **Waves:** set any number of waves (1-99), or `0` for endless. More zombies, runners and tanks every wave; **Zombie counts are doubled**, and every 5th wave brings a **boss** (waves 5 and 10 = 1 boss each, more later).
 - **Difficulty:** Easy / Normal / Hard / Nightmare scale zombie health, speed, damage, count and drop rate.
-- **Death & revive:** when you die you leave a grave. A living teammate must **stand on the grave for 30 seconds** to revive you (progress slowly drains if they step off). You come back with half health. You cannot revive yourself. If everyone is dead, the game is over.
+- **Death & revive:** when you die you leave a grave. A living teammate must **stand on the grave for 15 seconds** to revive you (progress slowly drains if they step off). You come back with half health. You cannot revive yourself. If everyone is dead, the game is over.
+- **Base building (co-op):** the first wave starts after a **30 s prepare phase**. **4 supply crates** appear at random spots on the map at the start and again after every wave; each holds 1 turret or 5 barricades (walk over them). Mines come from zombie drops. Keys: **T** plant turret, **B** barricade (first press shows a preview: blue = fits, red = blocked; press **B** again to place, Esc cancels), **N** plant mine, **X** remove a barricade/turret/mine next to you (refunds it). Turrets auto-fire at zombies (kills count for the owner), have HP and run out of ammo; zombies attack them. Barricades block walking but you and turrets **shoot over them**. Zombies walk around them when there is a way to you and only chew through when every way is blocked. Mines arm after ~1s and explode on zombie contact. Turrets are a rare drop; barricades/mines drop sometimes. The **Outpost** map is built for this: a large walled fort with open gaps (no doors), a tower, and open ground to fortify.
+- **Reduce motion** (Settings, also on by default if your OS asks for it): no screen shake, no camera drift, no dash somersault, no UI animations.
+- **Flamethrower**: short-range cone of fire (heavy, 8 kg, overheats like the Gatling, 1 ammo per 4 puffs). Keep a target in the flames for **3 seconds in a row** and it catches fire: burn damage for 4 more seconds (zombies and players).
 - **Items:** weapons and heal items lie around the map and drop from zombies. Dying drops your weapon.
 - **Chat:** lobby chat before you join, room chat in the room lobby, and in-game chat during play (rate-limited, 120 chars max, HTML is stripped).
 
@@ -112,7 +115,7 @@ When creating a PvP room, choose **PvP team deathmatch (Red vs Blue)**. Players 
 
 Open `/admin.html`, enter the admin password (the `ADMIN_PASSWORD` environment variable on the server; default `admin` - **change it**).
 
-- **Maps:** paint walls, crates, player spawns, zombie spawns and item spawns on a grid (16x16 up to 64x64). Two maps ship by default (Dead Town, Bunker Yard).
+- **Maps:** paint walls, crates, player spawns, zombie spawns and item spawns on a grid (16x16 up to 64x64). Three maps ship by default (Dead Town, Bunker Yard, Outpost).
 - **Items:** create custom weapons (damage, fire rate, range, pellets, spread, pierce, colour) and heal items. They appear on item spawns and in zombie drops.
 
 Data is stored in `data/data.json` on the server (set `DATA_FILE` to move it).

@@ -10,6 +10,7 @@ const DEFAULT_ITEMS = [
   { id: 'bandage', name: 'Bandage', type: 'heal', builtin: true, heal: 25, color: '#f1f1f1' },
   { id: 'medkit', name: 'Medkit', type: 'heal', builtin: true, heal: 60, color: '#ff4d4d' },
   { id: 'gatling', name: 'Gatling Gun', type: 'weapon', weight: 9, builtin: true, damage: 6, rate: 16, range: 13, pellets: 1, spread: 0.13, pierce: 0, heat: 0.02, lock: 2.8, color: '#e76f51' },
+  { id: 'flamethrower', name: 'Flamethrower', type: 'weapon', weight: 8, builtin: true, flame: true, damage: 4, rate: 14, range: 5.2, pellets: 1, spread: 0.3, pierce: 0, heat: 0.011, lock: 2.5, color: '#ff7b00' },
   { id: 'launcher', name: 'Grenade Launcher', type: 'weapon', weight: 7, builtin: true, launcher: true, damage: 65, radius: 2.6, rate: 0.55, range: 14, pellets: 1, spread: 0, pierce: 0, ammoCost: 6, color: '#8ab17d' },
   { id: 'sword', name: 'Sword', type: 'weapon', weight: 2.5, melee: true, builtin: true, damage: 40, rate: 2.3, range: 2.2, arc: 1.8, pellets: 1, spread: 0, pierce: 0, color: '#c9d6df' },
   { id: 'katana', name: 'Katana', type: 'weapon', weight: 1.2, melee: true, builtin: true, move: 1.5, damage: 13, rate: 4, range: 2.5, arc: 1.4, pellets: 1, spread: 0, pierce: 0, color: '#e0e7ff' },
@@ -17,6 +18,10 @@ const DEFAULT_ITEMS = [
   { id: 'vest', name: 'Light Vest', type: 'armor', builtin: true, amount: 40, color: '#4cc9f0' },
   { id: 'plate', name: 'Heavy Armor', type: 'armor', builtin: true, amount: 80, color: '#9d4edd' },
   { id: 'grenade', name: 'Grenade', type: 'grenade', builtin: true, damage: 85, radius: 3.4, amount: 1, color: '#7cb518' },
+  { id: 'turret', name: 'Auto Turret', type: 'turret', builtin: true, amount: 1, hp: 140, damage: 9, rate: 4, range: 10, color: '#4cc9f0' },
+  { id: 'barricade', name: 'Barricade', type: 'barricade', builtin: true, amount: 3, hp: 160, color: '#b08968' },
+  { id: 'mine', name: 'Land Mine', type: 'mine', builtin: true, amount: 2, damage: 110, radius: 2.4, color: '#e63946' },
+  { id: 'crate', name: 'Supply Crate', type: 'crate', builtin: true, amount: 1, color: '#c68b4d' },
   { id: 'ammo', name: 'Ammo Pack', type: 'ammo', builtin: true, amount: 40, color: '#ffd23f' },
 ];
 
@@ -138,7 +143,33 @@ function buildBunker() {
   return { id: 'bunker-yard', name: 'Bunker Yard', w, h, tiles: g.map((r) => r.join('')), playerSpawns, zombieSpawns, itemSpawns, builtin: true };
 }
 
-const buildDefaultMaps = () => [buildDeadTown(), buildBunker()];
+// Outpost: a zombie-defense map. A walled fort with doors and a tower in the middle, open ground all round for building a base
+// (barricades, turrets, mines), and zombie spawns on every edge.
+function buildOutpost() {
+  const w = 44, h = 44, g = makeGrid(w, h);
+  frame(g, 0, 0, w - 1, h - 1);
+  frame(g, 10, 10, 33, 33); // big fort, open gaps instead of doors
+  fill(g, 16, 10, 27, 10, '.'); fill(g, 16, 33, 27, 33, '.'); fill(g, 10, 16, 10, 27, '.'); fill(g, 33, 16, 33, 27, '.'); // 12-wide openings
+  fill(g, 18, 18, 25, 25, 'H'); fill(g, 15, 21, 17, 22, '>'); fill(g, 26, 21, 28, 22, '<'); // ramps
+  fill(g, 12, 12, 13, 12, 'c'); fill(g, 30, 31, 31, 31, 'c'); fill(g, 12, 31, 12, 31, 'c'); fill(g, 31, 12, 31, 12, 'c');
+  // ruins and cover outside the fort
+  fill(g, 6, 8, 9, 8, '#'); fill(g, 6, 8, 6, 11, '#'); fill(g, 34, 33, 37, 33, '#'); fill(g, 37, 30, 37, 33, '#');
+  fill(g, 8, 33, 8, 36, '#'); fill(g, 35, 8, 35, 10, '#'); fill(g, 21, 7, 22, 7, '#'); fill(g, 21, 36, 22, 36, '#');
+  // terrain: ponds, sand, bushes
+  fill(g, 32, 5, 36, 8, 'w'); fill(g, 6, 34, 9, 37, 'w'); fill(g, 3, 20, 4, 23, 's'); fill(g, 39, 20, 40, 23, 's');
+  fill(g, 2, 2, 5, 5, 'b'); fill(g, 38, 38, 41, 41, 'b'); fill(g, 5, 20, 7, 22, 'b'); fill(g, 36, 20, 38, 22, 'b');
+  const playerSpawns = [pt(14, 14), pt(29, 14), pt(14, 29), pt(29, 29), pt(20, 13), pt(23, 13), pt(20, 30), pt(23, 30)];
+  const zombieSpawns = [pt(2, 8), pt(41, 2), pt(2, 41), pt(41, 41), pt(21, 2), pt(22, 41), pt(2, 21), pt(41, 22)];
+  scatterCrates(g, mulberry32(5), 18, playerSpawns.concat(zombieSpawns));
+  const itemSpawns = [
+    pt(21, 19, 'shotgun'), pt(22, 24, 'rifle'), pt(14, 19, 'medkit'), pt(29, 19, 'smg'), pt(14, 26, 'grenade'), pt(29, 26, 'vest'),
+    pt(21, 6, 'random'), pt(22, 38, 'random'), pt(6, 25, 'medkit'), pt(37, 25, 'random'), pt(8, 9, 'ammo'), pt(35, 35, 'ammo'),
+    pt(8, 30, 'random'), pt(35, 12, 'random'), pt(21, 21, 'plate'), pt(22, 22, 'ammo'),
+  ];
+  return { id: 'outpost', name: 'Outpost (defense)', w, h, tiles: g.map((r) => r.join('')), playerSpawns, zombieSpawns, itemSpawns, builtin: true };
+}
+
+const buildDefaultMaps = () => [buildDeadTown(), buildBunker(), buildOutpost()];
 
 // ---------- validators ----------
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24);
@@ -150,9 +181,13 @@ function sanitizeItem(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('Bad item');
   const name = cleanName(raw.name, 20);
   if (!name) throw new Error('Item needs a name');
-  const type = raw.type === 'heal' ? 'heal' : raw.type === 'ammo' ? 'ammo' : raw.type === 'armor' ? 'armor' : raw.type === 'grenade' ? 'grenade' : 'weapon';
+  const type = raw.type === 'heal' ? 'heal' : raw.type === 'ammo' ? 'ammo' : raw.type === 'armor' ? 'armor' : raw.type === 'grenade' ? 'grenade' : ['turret', 'barricade', 'mine', 'crate'].includes(raw.type) ? raw.type : 'weapon';
   const id = validId(raw.id) ? raw.id : (slug(name) || 'item') + '-' + Math.random().toString(36).slice(2, 6);
   const color = /^#[0-9a-f]{6}$/i.test(raw.color || '') ? raw.color : '#ffffff';
+  if (type === 'turret') return { id, name, type, amount: 1, hp: Math.round(num(raw.hp, 10, 2000, 140)), damage: num(raw.damage, 1, 200, 9), rate: num(raw.rate, 0.5, 20, 4), range: num(raw.range, 3, 20, 10), color };
+  if (type === 'barricade') return { id, name, type, amount: Math.round(num(raw.amount, 1, 12, 3)), hp: Math.round(num(raw.hp, 10, 3000, 160)), color };
+  if (type === 'mine') return { id, name, type, amount: Math.round(num(raw.amount, 1, 8, 2)), damage: Math.round(num(raw.damage, 1, 500, 110)), radius: num(raw.radius, 1, 6, 2.4), color };
+  if (type === 'crate') return { id, name, type, amount: 1, color };
   if (type === 'grenade') return { id, name, type, damage: Math.round(num(raw.damage, 1, 500, 85)), radius: num(raw.radius, 1, 8, 3.4), amount: Math.round(num(raw.amount, 1, 4, 1)), color };
   if (type === 'armor') return { id, name, type, amount: Math.round(num(raw.amount, 1, 100, 40)), color };
   if (type === 'ammo') return { id, name, type, amount: Math.round(num(raw.amount, 1, 240, 40)), color };
@@ -165,6 +200,7 @@ function sanitizeItem(raw) {
     spread: num(raw.spread, 0, 0.8, 0.05), pierce: Math.round(num(raw.pierce, 0, 5, 0)),
   };
   if (raw.launcher) { out.launcher = true; out.radius = num(raw.radius, 1, 8, 2.6); out.ammoCost = Math.round(num(raw.ammoCost, 1, 30, 6)); out.range = Math.min(out.range, 30); }
+  if (raw.flame) { out.flame = true; out.range = Math.min(out.range, 8); out.spread = Math.max(out.spread, 0.15); }
   if (raw.heat) { out.heat = num(raw.heat, 0.002, 0.5, 0.02); out.lock = num(raw.lock, 0.5, 8, 2.8); }
   if (raw.weight) out.weight = num(raw.weight, 0, 20, 0);
   if (raw.move) out.move = num(raw.move, 0.4, 3, 1);

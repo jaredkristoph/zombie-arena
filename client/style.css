@@ -166,3 +166,8 @@ body.old-server #old-server { display: block; }
 #headshot.show { animation: hsPop 1.1s ease-out forwards; }
 @keyframes hsPop { 0% { opacity: 0; transform: translate(-50%, -50%) scale(.5); } 12% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); } 25% { transform: translate(-50%, -50%) scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -62%) scale(1); } }
 #hidden-tag { position: absolute; left: 50%; bottom: 150px; transform: translateX(-50%); display: none; background: #1f5d2acc; color: #c9f7c9; padding: 4px 12px; border-radius: 10px; font-weight: 800; letter-spacing: 1px; font-size: 13px; }
+
+/* reduce motion (settings) */
+body.calm *, body.calm *::before, body.calm *::after { animation: none !important; transition: none !important; }
+body.calm #headshot.show { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { body.calm #hurt { transition: none; } }

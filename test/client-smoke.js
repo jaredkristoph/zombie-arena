@@ -101,7 +101,7 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   const $ = (id) => document.getElementById(id);
 
   // lobby
-  await until(() => $('c-map').children.length === 2);
+  await until(() => $('c-map').children.length === 3);
   assert.ok(body.classList.contains('screen-menu'));
   // character preview + head accessory picker (buttons and arrow keys)
   assert.strictEqual($('acc-name').textContent, 'None');
@@ -146,7 +146,7 @@ const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now(
   const stepFrames = async (ms) => { const end = Date.now() + ms; while (Date.now() < end) { t += 16.7; if (rafCb) { const cb = rafCb; rafCb = null; cb(t); } await sleep(16); } };
   await stepFrames(600);
   assert.ok(global.__frames > 5, 'render loop is running (' + global.__frames + ' frames)');
-  assert.ok(/GET READY|WAVE/.test($('wave-title').textContent), 'wave HUD: ' + $('wave-title').textContent);
+  assert.ok(/PREPARE|GET READY|WAVE/.test($('wave-title').textContent), 'wave HUD: ' + $('wave-title').textContent);
   console.log('  ok  game start: world built, render loop running, HUD:', $('wave-title').textContent, '/', $('wave-sub').textContent);
 
   // movement + shooting through real prediction/reconcile path

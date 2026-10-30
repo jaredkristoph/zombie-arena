@@ -178,11 +178,11 @@
       const n = document.createElement('td'); const d = document.createElement('span'); d.className = 'dot'; d.style.background = i.color;
       n.append(d, document.createTextNode(i.name));
       const s = document.createElement('td');
-      s.textContent = i.type === 'heal' ? 'Heals ' + i.heal : i.type === 'armor' ? 'Armor +' + i.amount : i.type === 'grenade' ? `Grenade ${i.damage} dmg, radius ${i.radius}, +${i.amount} per pickup` : i.type === 'ammo' ? '+' + i.amount + ' bullets (shared by all guns)' : `${i.melee ? 'Melee ' : ''}${i.damage} dmg x${i.pellets} · ${i.rate}/s · range ${i.range}` + (i.pierce ? ' · pierce ' + i.pierce : '') + (i.weight ? ' · ' + i.weight + ' kg' : '');
+      s.textContent = i.type === 'heal' ? 'Heals ' + i.heal : i.type === 'armor' ? 'Armor +' + i.amount : i.type === 'grenade' ? `Grenade ${i.damage} dmg, radius ${i.radius}, +${i.amount} per pickup` : ['turret','barricade','mine','crate'].includes(i.type) ? `Co-op ${i.type}${i.hp ? ', ' + i.hp + ' HP' : ''}${i.damage ? ', ' + i.damage + ' dmg' : ''} (built-in)` : i.type === 'ammo' ? '+' + i.amount + ' bullets (shared by all guns)' : `${i.melee ? 'Melee ' : ''}${i.damage} dmg x${i.pellets} · ${i.rate}/s · range ${i.range}` + (i.pierce ? ' · pierce ' + i.pierce : '') + (i.weight ? ' · ' + i.weight + ' kg' : '');
       const a = document.createElement('td'); a.style.textAlign = 'right';
       const e = document.createElement('button'); e.textContent = 'Edit'; e.className = 'ghost'; e.style.padding = '4px 10px';
       e.onclick = () => editItem(i);
-      a.appendChild(e);
+      if (!['turret', 'barricade', 'mine', 'crate'].includes(i.type)) a.appendChild(e);
       if (i.id !== 'pistol') {
         const x = document.createElement('button'); x.textContent = 'Delete'; x.className = 'ghost'; x.style.cssText = 'padding:4px 10px;margin-left:6px';
         x.onclick = async () => { if (!confirm('Delete ' + i.name + '?')) return; try { await api('DELETE', '/api/admin/items/' + i.id, null, true); await reload(); } catch (err) { say('i-msg', err.message); } };

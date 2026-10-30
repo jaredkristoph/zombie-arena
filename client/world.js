@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { lerpAngle, makeGrid, heightAt } from './util.js';
 
 // terrain of the current map (high ground + ramps); everything that stands on the ground is lifted by this
-let tGrid = null;
+let tGrid = null, mapW = 1;
 // things that step off an edge fall to the ground instead of snapping; going up (ramps) follows the slope
 function settle(v, target, dt) {
   if (v.hy === undefined || target >= v.hy) { v.hy = target; v.fv = 0; return target; }
@@ -39,7 +39,7 @@ function darken(hex, f) {
 let renderer, scene, camera, worldGroup, entGroup, particles, W = 1, H = 1;
 const players = new Map(), zombies = new Map(), groundViews = new Map(), graveViews = new Map();
 const tracers = [], slashes = [];
-const doorViews = new Map(), nadeViews = [], blasts = [];
+const doorViews = new Map(), nadeViews = [], blasts = [], turretViews = new Map(), wallViews = new Map(), mineViews = [];
 const cam = { x: 0, y: 0, h: 0, shake: 0 };
 const P = { n: 260, i: 0, pos: null, vel: null, life: null, max: null, size: null };
 const dummy = new THREE.Object3D();
@@ -113,6 +113,7 @@ export function buildMap(map) {
   floor.position.set(map.w / 2, 0, map.h / 2);
   worldGroup.add(floor);
   tGrid = makeGrid(map);
+  mapW = map.w;
   const walls = [], crates = [], highs = [], ramps = [], sands = [], waters = [], bushes = [], doorTiles = [];
   for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
     const c = map.tiles[y][x];
@@ -237,6 +238,85 @@ export function setGrenades(list) {
     if (n) m.position.set(n[1], 0.35 + groundH(n[1], n[2]), n[2]);
   });
 }
+// ---------- zombie-defense gear ----------
+export function setTurrets(list) {
+  const live = new Set();
+  for (const [id, x, y, a, hp, ammo] of list) {
+    live.add(id);
+    let v = turretViews.get(id);
+    if (!v) {
+      const root = new THREE.Group(), head = new THREE.Group();
+      root.add(shadow(0.45), box(0.55, 0.12, 0.55, METAL, 0, 0.08, 0), box(0.08, 0.4, 0.08, STEEL, 0.22, 0.28, 0.22), box(0.08, 0.4, 0.08, STEEL, -0.22, 0.28, 0.22), box(0.08, 0.4, 0.08, STEEL, 0, 0.28, -0.28));
+      head.position.y = 0.62;
+      head.add(box(0.4, 0.28, 0.34, '#4cc9f0', 0, 0, 0), box(0.6, 0.09, 0.09, STEEL, 0.45, 0.02, 0), box(0.12, 0.12, 0.12, '#222', -0.2, 0.2, 0));
+      const bar = new THREE.Group();
+      const bg = new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ color: 0x000000 })), fill = new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ color: 0x4cc9f0 }));
+      bg.scale.set(0.9, 0.11, 0.01); fill.scale.set(0.84, 0.07, 0.01); fill.position.z = 0.01; bar.add(bg, fill); bar.position.y = 1.2;
+      root.add(head, bar);
+      entGroup.add(root);
+      v = { root, head, bar, fill };
+      turretViews.set(id, v);
+    }
+    v.root.position.set(x, groundH(x, y), y);
+    v.head.rotation.y = -a;
+    v.fill.scale.x = 0.84 * (hp / 100); v.fill.position.x = -0.42 * (1 - hp / 100);
+    v.fill.material.color.set(hp < 35 ? 0xff4d6d : 0x4cc9f0);
+    v.head.children[0].material = mat(ammo < 12 ? '#c0392b' : '#4cc9f0');
+    v.bar.quaternion.copy(camera.quaternion);
+  }
+  for (const [id, v] of [...turretViews]) if (!live.has(id)) { entGroup.remove(v.root); turretViews.delete(id); }
+}
+// placement preview for a barricade: a translucent block, blue when it fits and red when it does not
+let ghost = null;
+export function setBuildGhost(tx, ty, valid) {
+  if (!ghost) {
+    ghost = new THREE.Group();
+    ghost.add(new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.45, depthWrite: false })));
+    ghost.add(new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.8 })));
+    ghost.children.forEach((m) => m.scale.set(0.98, 1, 0.98));
+    scene.add(ghost);
+  }
+  if (tx == null) { ghost.visible = false; return; }
+  ghost.visible = true;
+  ghost.children[0].material.color.set(valid ? 0x3b82f6 : 0xef4444);
+  ghost.children[1].material.color.set(valid ? 0xbfdbfe : 0xfecaca);
+  ghost.position.set(tx + 0.5, groundH(tx + 0.5, ty + 0.5) + 0.5, ty + 0.5);
+}
+export function setWall(idx, on) {
+  const old = wallViews.get(idx);
+  if (old) { entGroup.remove(old.mesh); wallViews.delete(idx); }
+  if (!on) return;
+  const x = idx % mapW, z = Math.floor(idx / mapW);
+  const m = new THREE.Group();
+  m.add(box(0.96, 0.22, 0.96, '#9a7352', 0, 0.11, 0), box(0.96, 0.22, 0.96, '#b08968', 0, 0.33, 0), box(0.96, 0.22, 0.96, '#9a7352', 0, 0.55, 0), box(0.96, 0.22, 0.96, '#b08968', 0, 0.77, 0),
+    box(0.12, 0.98, 1.0, '#6b4a2f', -0.38, 0.49, 0), box(0.12, 0.98, 1.0, '#6b4a2f', 0.38, 0.49, 0));
+  m.position.set(x + 0.5, groundH(x + 0.5, z + 0.5), z + 0.5);
+  entGroup.add(m);
+  wallViews.set(idx, { mesh: m, hp: 100 });
+}
+export function setWallHp(list) {
+  const dmg = new Map(list);
+  for (const [idx, v] of wallViews) {
+    const hp = dmg.has(idx) ? dmg.get(idx) : 100;
+    if (hp === v.hp) continue;
+    v.hp = hp;
+    v.mesh.scale.y = 0.55 + 0.45 * (hp / 100); // a damaged barricade sinks
+  }
+}
+export function setMines(list) {
+  while (mineViews.length < list.length) {
+    const m = new THREE.Group();
+    m.add(box(0.5, 0.08, 0.5, '#3b3f47', 0, 0.04, 0), box(0.3, 0.06, 0.3, '#5a606b', 0, 0.1, 0), box(0.1, 0.07, 0.1, '#ff3b3b', 0, 0.16, 0));
+    entGroup.add(m); mineViews.push(m);
+  }
+  mineViews.forEach((m, i) => {
+    const e = list[i];
+    m.visible = !!e;
+    if (!e) return;
+    m.position.set(e[1], groundH(e[1], e[2]), e[2]);
+    m.children[2].visible = e[3] === 1 ? Math.floor(performance.now() / 350) % 2 === 0 : true; // armed mines blink
+  });
+}
 export function blast(x, y, R) {
   const m = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.5, 28).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffa13a, transparent: true, opacity: 0.9, depthWrite: false }));
   m.position.set(x, 0.1 + groundH(x, y), y);
@@ -244,7 +324,7 @@ export function blast(x, y, R) {
   blasts.push({ m, life: 0.4, R });
   burst(x, y, 0.5, '#ffb347', 36, 7, 0.26, 0.6);
   burst(x, y, 0.5, '#444444', 14, 4, 0.3, 0.9);
-  cam.shake = Math.max(cam.shake, 0.6);
+  if (!calm) cam.shake = Math.max(cam.shake, 0.6);
 }
 function clearMap() {
   if (!worldGroup) return;
@@ -445,8 +525,8 @@ export function updatePlayer(v, x, y, a, dead, gunColor, dt, moving, turn = 0, p
   if (v.rollTimer > 0) { v.rollTimer -= dt; rolling = true; }
   v.rollT = rolling ? Math.min(1, (v.rollT || 0) + dt / 0.55) : 0;
   v.model.rotation.order = 'YXZ';
-  v.model.rotation.x = rolling ? v.rollT * Math.PI * 2 : 0;
-  if (rolling) v.model.position.y = 0.6 * Math.sin(v.rollT * Math.PI);
+  v.model.rotation.x = rolling && !calm ? v.rollT * Math.PI * 2 : 0; // reduced motion: no somersault
+  if (rolling && !calm) v.model.position.y = 0.6 * Math.sin(v.rollT * Math.PI);
 }
 export function playerView(id) { return players.get(id); } // (tests)
 // roll animation for a player, started by the server's dash event (same way shots are shown)
@@ -470,6 +550,7 @@ const ZCFG = [
   { sc: 1, head: '#9bd16a', shirts: ['#7b5ea7', '#c0392b', '#2c7da0', '#b08968'] },
   { sc: 0.88, head: '#d4e857', shirts: ['#e67e22', '#f1c40f', '#e84393'] },
   { sc: 1.6, head: '#79a35a', shirts: ['#5c3b2e', '#3d3d5c'] },
+  { sc: 2.3, head: '#a8473d', shirts: ['#2b1a1a'] }, // boss
 ];
 export function ensureZombie(id, type) {
   let v = zombies.get(id);
@@ -487,6 +568,7 @@ export function ensureZombie(id, type) {
     box(0.1, 0.1, 0.05, '#ff2a2a', -0.12, 1.45, 0.24), box(0.1, 0.1, 0.05, '#ff2a2a', 0.12, 1.45, 0.24),
     box(0.22, 0.06, 0.05, '#2a0a0a', 0, 1.28, 0.24), armL, armR,
   );
+  if (type === 3) inner.add(box(0.1, 0.34, 0.1, '#e9e2c8', -0.2, 1.82, 0), box(0.1, 0.34, 0.1, '#e9e2c8', 0.2, 1.82, 0), box(0.74, 0.14, 0.5, '#6b1d1d', 0, 1.05, 0), box(0.18, 0.18, 0.06, '#ffcc00', -0.12, 1.45, 0.25), box(0.18, 0.18, 0.06, '#ffcc00', 0.12, 1.45, 0.25));
   const bar = new THREE.Group();
   const bg = new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ color: 0x000000 })), fill = new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ color: 0xff4d6d }));
   bg.scale.set(1.0, 0.13, 0.01); fill.scale.set(0.94, 0.08, 0.01); fill.position.z = 0.01;
@@ -513,7 +595,7 @@ export function updateZombie(v, x, y, hpPct, dt) {
   v.hp = hpPct;
   v.pop = Math.max(0, v.pop - dt * 6);
   v.model.scale.setScalar(1 + v.pop * 0.18);
-  v.bar.visible = hpPct < 100;
+  v.bar.visible = hpPct < 100 || v.type === 3;
   if (v.bar.visible) { v.fill.scale.x = 0.94 * (hpPct / 100); v.fill.position.x = -0.47 * (1 - hpPct / 100); v.bar.quaternion.copy(camera.quaternion); }
 }
 export function removeZombie(id) { removeView(zombies, id); }
@@ -533,7 +615,7 @@ export function syncIds(kind, liveIds) {
 // Floor models: one recognisable silhouette per weapon (barrel points along +x). Custom weapons use the generic shape in itemMesh.
 // where the muzzle ends up in front of the character: hand position + the model's barrel tip, scaled
 const HELD_SCALE = 0.85, HAND_Z = 0.4;
-const TIP = { pistol: 0.3, smg: 0.59, shotgun: 0.7, rifle: 0.85, sniper: 0.95, gatling: 0.69, launcher: 0.77 };
+const TIP = { pistol: 0.3, smg: 0.59, shotgun: 0.7, rifle: 0.85, sniper: 0.95, gatling: 0.69, flamethrower: 0.8, launcher: 0.77 };
 export const muzzleForward = (id) => (TIP[id] ? HAND_Z - 0.1 * HELD_SCALE + TIP[id] * HELD_SCALE : 0.97);
 const METAL = '#3b3f47', STEEL = '#8d949e', WOOD = '#8a5a2b', BLACK = '#1d1f23';
 const GUN_MODELS = {
@@ -562,6 +644,10 @@ const GUN_MODELS = {
     g.add(box(0.1, 0.26, 0.26, METAL, 0.62, 0.58, 0), box(0.1, 0.26, 0.26, METAL, 0.2, 0.58, 0), box(0.34, 0.24, 0.24, c, -0.2, 0.58, 0),
       box(0.26, 0.2, 0.2, BLACK, -0.12, 0.36, 0.0), box(0.06, 0.06, 0.22, STEEL, -0.45, 0.58, 0), box(0.1, 0.24, 0.12, BLACK, -0.55, 0.42, 0));
   },
+  flamethrower(g, c) {
+    g.add(box(0.7, 0.1, 0.1, STEEL, 0.3, 0.58, 0), box(0.14, 0.14, 0.14, '#ff7b00', 0.74, 0.58, 0), box(0.1, 0.1, 0.1, '#ffd23f', 0.82, 0.58, 0),
+      box(0.22, 0.34, 0.22, c, -0.35, 0.5, 0.18), box(0.22, 0.34, 0.22, c, -0.35, 0.5, -0.18), box(0.1, 0.1, 0.5, METAL, -0.35, 0.72, 0), box(0.1, 0.22, 0.1, BLACK, 0.1, 0.4, 0));
+  },
   launcher(g, c) {
     g.add(box(0.9, 0.2, 0.2, c, 0.05, 0.58, 0), box(0.14, 0.27, 0.27, METAL, 0.55, 0.58, 0), box(0.12, 0.24, 0.24, METAL, -0.42, 0.58, 0), box(0.12, 0.3, 0.1, BLACK, -0.05, 0.37, 0),
       box(0.1, 0.1, 0.1, '#e9c46a', 0.28, 0.76, 0), box(0.1, 0.18, 0.1, BLACK, 0.2, 0.42, 0), box(0.18, 0.12, 0.12, '#c1440e', 0.68, 0.58, 0));
@@ -585,6 +671,19 @@ function itemMesh(def) {
     for (const x of [-0.17, 0, 0.17]) g.add(box(0.1, 0.24, 0.1, color, x, 0.74, 0), box(0.1, 0.07, 0.1, '#c98a2b', x, 0.89, 0));
   } else if (def && def.type === 'armor') {
     g.add(box(0.56, 0.5, 0.3, color, 0, 0.5, 0), box(0.14, 0.2, 0.3, darken(color, 0.7), -0.2, 0.82, 0), box(0.14, 0.2, 0.3, darken(color, 0.7), 0.2, 0.82, 0), box(0.3, 0.1, 0.32, '#ffffff', 0, 0.55, 0));
+  } else if (def && def.type === 'turret') {
+    g.add(box(0.5, 0.1, 0.5, METAL, 0, 0.35, 0), box(0.07, 0.3, 0.07, STEEL, 0.2, 0.2, 0.2), box(0.07, 0.3, 0.07, STEEL, -0.2, 0.2, 0.2), box(0.07, 0.3, 0.07, STEEL, 0, 0.2, -0.25),
+      box(0.34, 0.24, 0.3, color, 0, 0.56, 0), box(0.5, 0.07, 0.07, STEEL, 0.38, 0.58, 0));
+  } else if (def && def.type === 'barricade') {
+    g.add(box(0.7, 0.12, 0.2, '#b08968', 0, 0.3, 0.2), box(0.7, 0.12, 0.2, '#9a7352', 0, 0.3, -0.05), box(0.7, 0.12, 0.2, '#b08968', 0, 0.44, 0.1), box(0.7, 0.12, 0.2, '#9a7352', 0, 0.58, 0.1), box(0.08, 0.5, 0.5, '#6b4a2f', -0.3, 0.42, 0.08), box(0.08, 0.5, 0.5, '#6b4a2f', 0.3, 0.42, 0.08));
+  } else if (def && def.type === 'mine') {
+    g.add(box(0.5, 0.1, 0.5, '#3b3f47', 0, 0.35, 0), box(0.3, 0.07, 0.3, '#5a606b', 0, 0.42, 0), box(0.1, 0.1, 0.1, '#ff3b3b', 0, 0.5, 0));
+  } else if (def && def.type === 'crate') {
+    // a big wooden supply box with dark corner posts and a yellow strap
+    g.add(box(0.95, 0.8, 0.95, '#b9854a', 0, 0.4, 0), box(1.02, 0.1, 1.02, '#e0aa6a', 0, 0.82, 0), box(0.2, 0.84, 0.99, '#ffd23f', 0, 0.42, 0), box(0.99, 0.84, 0.2, '#ffd23f', 0, 0.42, 0));
+    for (const sx of [-0.47, 0.47]) for (const sz of [-0.47, 0.47]) g.add(box(0.1, 0.86, 0.1, '#5a4326', sx, 0.43, sz));
+    const beam = new THREE.Mesh(BOX, new THREE.MeshBasicMaterial({ color: '#ffd23f', transparent: true, opacity: 0.35, depthWrite: false }));
+    beam.scale.set(0.14, 3.2, 0.14); beam.position.y = 2.2; g.add(beam);
   } else if (def && def.type === 'grenade') {
     g.add(box(0.3, 0.34, 0.3, '#4b6b1f', 0, 0.45, 0), box(0.12, 0.1, 0.12, '#c9c9c9', 0, 0.68, 0), box(0.2, 0.04, 0.04, '#e9c46a', 0.1, 0.74, 0));
   } else if (def && def.melee) {
@@ -671,6 +770,11 @@ export function addBlood(x, y, size = 1, n = 6) {
 }
 
 export function clearEntities() {
+  for (const v of turretViews.values()) entGroup.remove(v.root);
+  turretViews.clear();
+  for (const v of wallViews.values()) entGroup.remove(v.mesh);
+  wallViews.clear();
+  for (const m of mineViews) m.visible = false;
   for (const m of nadeViews) m.visible = false;
   for (const b of blasts) { entGroup.remove(b.m); b.m.geometry.dispose(); }
   blasts.length = 0;
@@ -708,7 +812,9 @@ export function burst(x, y, z, color, count, speed, size, life) {
   }
   particles.instanceColor.needsUpdate = true;
 }
-export function shake(a) { cam.shake = Math.max(cam.shake, a); }
+let calm = false;
+export function setCalm(on) { calm = !!on; if (calm) cam.shake = 0; }
+export function shake(a) { if (!calm) cam.shake = Math.max(cam.shake, a); }
 
 // ---------- camera / frame ----------
 export function snapCamera(x, y) { cam.x = x; cam.y = y; }

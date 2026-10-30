@@ -5,7 +5,9 @@ const { buildTerrain, canStep } = require('./terrain');
 const TICK_HZ = 20;
 const DT = 1 / TICK_HZ;
 const PLAYER_R = 0.38, PLAYER_SPEED = 5.2, PLAYER_HP = 100, BAG_MAX = 4;
-const PICK_R = 1.6, GRAVE_R = 1.5, REVIVE_SECONDS = 30, BREAK_SECONDS = 8, MAX_ALIVE = 45;
+const PICK_R = 1.6, GRAVE_R = 1.5, REVIVE_SECONDS = 15, BREAK_SECONDS = 8, MAX_ALIVE = 80, PREP_SECONDS = 30;
+// zombie-defense gear (co-op): turrets shoot zombies on their own, barricades block walking but not bullets, mines blow up zombies
+const TURRET_AMMO = 160, TURRET_MAX = 6, WALL_R = 0.35, CARRY = { turret: 3, barricade: 12, mine: 8 }, MINE_ARM = 1.2;
 const AMMO_START = 90, AMMO_MAX = 240, WAVE_AMMO = 25, AMMO_PICK_R = 0.95, ACC_COUNT = 35, FIT_COUNT = 20;
 // headshots: only the shot that KILLS can be one, and only HS_CHANCE of the time
 const HS_CHANCE = 0.05;
@@ -42,6 +44,7 @@ const ZTYPES = [
   { hp: 40, spd: 1.7, dmg: 10, r: 0.38 },
   { hp: 24, spd: 3.3, dmg: 7, r: 0.33 },
   { hp: 240, spd: 1.15, dmg: 22, r: 0.62 },
+  { hp: 1100, spd: 1.3, dmg: 34, r: 0.85 }, // boss (waves 5, 10, ...)
 ];
 
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -162,7 +165,7 @@ class Room {
     });
   }
   initMsg(p) {
-    return { t: 'start', doors: [...this.doorOpen], you: p.id, map: this.map, items: this.itemDefs, room: this.info(), revive: this.reviveSeconds, pickR: PICK_R, graveR: GRAVE_R, respawn: RESPAWN_SECONDS };
+    return { t: 'start', doors: [...this.doorOpen], walls: [...this.walls.keys()], you: p.id, map: this.map, items: this.itemDefs, room: this.info(), revive: this.reviveSeconds, pickR: PICK_R, graveR: GRAVE_R, respawn: RESPAWN_SECONDS };
   }
   humans() {
     let n = 0;
@@ -284,11 +287,12 @@ class Room {
     this.ev = [];
     this.wave = 0;
     this.phase = 'break';
-    this.timer = 6;
+    this.timer = this.mode === 'coop' ? PREP_SECONDS : 6; // co-op: 30 seconds to prepare before wave 1
     this.queue = 0;
     this.spawnT = 0;
     this.gver = 0;
     this.nades = [];
+    this.turrets = []; this.mines = []; this.walls = new Map();
     this.resetDoors();
     this.tickN = 0;
     this.overT = 0;
@@ -339,7 +343,7 @@ class Room {
     const sp = this.mode === 'pvp' ? this.respawnSpot(p) : this.map.playerSpawns[Math.floor(rand() * this.map.playerSpawns.length)];
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0; p.heat = 0; p.lock = 0;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0; p.shoot = false; p.rs = 0; p.inv = 0; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0; p.heat = 0; p.lock = 0; p.turrets = 0; p.walls = 0; p.mines = 0;
   }
   // pvp respawn: the spawn point farthest from every living enemy
   respawnSpot(p) {
@@ -358,7 +362,7 @@ class Room {
     const sp = this.respawnSpot(p);
     p.x = sp.x + 0.5 + (rand() - 0.5) * 0.4;
     p.y = sp.y + 0.5 + (rand() - 0.5) * 0.4;
-    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0; p.heat = 0; p.lock = 0;
+    p.hp = PLAYER_HP; p.dead = false; p.weapon = this.startWeapon; p.bag = []; p.cd = 0.3; p.shoot = false; p.rs = 0; p.inv = SPAWN_PROTECT; p.ammo = AMMO_START; p.stam = STAM_MAX; p.exh = false; p.sprinting = false; p.dashT = 0; p.dashLeft = 0; p.boostT = 0; p.dinv = 0; p.armor = 0; p.nades = NADE_START; p.nadeCd = 0; p.heat = 0; p.lock = 0; p.turrets = 0; p.walls = 0; p.mines = 0;
     this.ev.push(['r', p.id]);
   }
   startGame() {
@@ -369,11 +373,13 @@ class Room {
     if (this.mode === 'pvp') for (const p of this.players.values()) p.dead = true; // so spawns are spread out
     for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.gsent = -1; p.inv = 0; if (p.ai) { p.ai.path = []; p.ai.tgt = null; } this.placePlayer(p); if (this.mode === 'pvp') p.inv = SPAWN_PROTECT; }
     this.spawnMapItems(true);
+    if (this.mode === 'coop') this.spawnSupplies();
     for (const p of this.players.values()) p.conn.send(this.initMsg(p));
     if (this.mode === 'pvp') {
       this.say(`${this.teams ? 'Team deathmatch (Red vs Blue)!' : 'Deathmatch!'} ${this.killLimit ? 'First to ' + this.killLimit + ' kills wins' : 'Endless'} on ${this.map.name}. You respawn ${RESPAWN_SECONDS}s after dying. Press Enter to chat.`);
     } else {
-      this.say(`Game on! ${this.waves ? this.waves + ' waves' : 'Endless'} on ${this.map.name} (${this.difficulty}). Wave 1 in ${this.timer}s. Press Enter to chat.`);
+      this.say(`Game on! ${this.waves ? this.waves + ' waves' : 'Endless'} on ${this.map.name} (${this.difficulty}). Wave 1 in ${this.timer}s - build your base!`);
+      this.broadcast({ t: 'toast', text: 'Prepare! Open supply crates, then build: T turret, B barricade, N mine, X remove' });
     }
     this.sendRoom();
   }
@@ -497,6 +503,14 @@ class Room {
       if (p.weapon === this.startWeapon) return;
       this.addGround(p.x + Math.cos(p.a) * 0.9, p.y + Math.sin(p.a) * 0.9, p.weapon, 0);
       p.weapon = this.startWeapon;
+    } else if (k === 'turret') {
+      this.plantTurret(p);
+    } else if (k === 'wall') {
+      this.plantWall(p);
+    } else if (k === 'mine') {
+      this.plantMine(p);
+    } else if (k === 'remove') {
+      this.removeGear(p);
     } else if (k === 'nade') {
       this.throwNade(p);
     } else if (k === 'dropheal') {
@@ -535,8 +549,9 @@ class Room {
   fire(p) {
     const w = this.weapon(p.weapon);
     if (w.melee) return this.swing(p, w);
-    const cost = w.ammoCost || 1;
-    if (p.ammo < cost) { p.cd = 0.3; this.ev.push(['e', p.id]); return; }
+    // flamethrower: a stream of fire, 1 ammo per 4 puffs
+    const cost = w.flame ? (((p.fl = ((p.fl | 0) + 1) % 4) === 1) ? 1 : 0) : (w.ammoCost || 1);
+    if (p.ammo < Math.max(cost, w.flame ? 1 : 0)) { p.cd = 0.3; this.ev.push(['e', p.id]); return; }
     p.ammo -= cost;
     p.cd = 1 / w.rate;
     if (w.heat) { // gatling: firing builds heat; at 100% it jams and you wait out the cooldown
@@ -544,6 +559,7 @@ class Room {
       if (p.heat >= 1) { p.heat = 1; p.lock = w.lock || 2.8; this.ev.push(['j', p.id]); }
     }
     if (w.launcher) { p.inv = 0; return this.launch(p, w); }
+    if (w.flame) { p.inv = 0; return this.flame(p, w); }
     p.inv = 0; // shooting ends spawn protection
     const pvp = this.mode === 'pvp';
     // targets: other players that are alive and not spawn-protected (pvp) or zombies (co-op)
@@ -580,6 +596,43 @@ class Room {
       this.ev.push(['s', r2(p.x), r2(p.y), r2(ang), r2(len), hit, w.id, head]);
     }
   }
+  // flamethrower: hits everything in a short cone. 3 seconds of unbroken fire sets the target alight (burn damage for a few seconds)
+  flame(p, w) {
+    const pvp = this.mode === 'pvp';
+    const targets = pvp ? this.alivePlayers().filter((q) => this.foe(p, q) && !(q.inv > 0 || q.dinv > 0)) : this.zombies;
+    let hit = 0, len = w.range;
+    for (const z of targets) {
+      if (z.dead || z === p) continue;
+      const r = pvp ? PLAYER_R : z.r, ox = z.x - p.x, oy = z.y - p.y, d = Math.hypot(ox, oy);
+      if (d > w.range + r) continue;
+      const da = Math.abs(Math.atan2(Math.sin(Math.atan2(oy, ox) - p.a), Math.cos(Math.atan2(oy, ox) - p.a)));
+      if (d > 0.01 && da > w.spread + Math.asin(Math.min(1, r / d))) continue;
+      const wd = this.rayWall(p.x, p.y, ox / (d || 1), oy / (d || 1), d);
+      if (wd < d - r - 0.05) continue;
+      hit = 1;
+      if (pvp) this.damagePlayer(z, w.damage, p); else this.damageZombie(z, w.damage, p);
+      z.fGap = 0; z.fAcc = (z.fAcc || 0) + DT * Math.ceil(1 / w.rate / DT - 1e-6); // real time between puffs (ticks)
+      if (z.fAcc >= 3 && !z.dead) { if (!(z.burn > 0)) this.ev.push(['b', r2(z.x), r2(z.y)]); z.burn = 4; z.burner = p; }
+    }
+    this.ev.push(['s', r2(p.x), r2(p.y), r2(p.a), r2(w.range), hit, w.id, 0]);
+  }
+  // fire that keeps burning: called every tick for zombies and players
+  updateBurn() {
+    const all = this.zombies.concat([...this.players.values()]);
+    for (const z of all) {
+      if (z.fAcc > 0 && (z.fGap = (z.fGap || 0) + DT) > 0.5) z.fAcc = 0; // the stream was broken
+      if (!(z.burn > 0)) continue;
+      if (z.dead) { z.burn = 0; continue; }
+      z.burn -= DT;
+      z.bt = (z.bt || 0) + DT;
+      if (z.bt >= 0.5) {
+        z.bt = 0;
+        this.ev.push(['b', r2(z.x), r2(z.y)]);
+        const src = z.burner || { kills: 0 };
+        if (z.name !== undefined) this.damagePlayer(z, 5, src); else this.damageZombie(z, 7, src);
+      }
+    }
+  }
   // damage to a player: armor soaks ARMOR_ABSORB of it until it is gone
   hurt(v, dmg) {
     const soak = Math.min(v.armor, dmg * ARMOR_ABSORB);
@@ -599,15 +652,20 @@ class Room {
     z.dead = true;
     p.kills++; p.boostT = KILL_BOOST_TIME;
     this.ev.push(['k', r2(z.x), r2(z.y), z.type]);
-    if (rand() < 0.1 * this.d.drop + (z.type === 2 ? 0.5 : 0)) {
+    const big = z.type === 3 ? 1 : z.type === 2 ? 0.25 : 0;
+    if (this.mode === 'coop') { // base-building gear is rare: turrets rarest
+      const gear = (id, base) => { if (this.itemDefs[id] && rand() < base + big * 0.35) this.addGround(z.x - 0.3, z.y - 0.2, id, 45); };
+      if (rand() < 0.5) gear('turret', 0.02); else if (rand() < 0.5) gear('barricade', 0.08); else gear('mine', 0.08);
+    }
+    if (rand() < 0.1 * this.d.drop + (z.type >= 2 ? 0.5 : 0)) {
       const ids = this.lootIds();
       if (ids.length) this.addGround(z.x, z.y, ids[Math.floor(rand() * ids.length)], 45);
     }
-    if (this.itemDefs.ammo && rand() < 0.16 + (z.type === 2 ? 0.5 : 0)) this.addGround(z.x + 0.3, z.y + 0.3, 'ammo', 45);
+    if (this.itemDefs.ammo && rand() < 0.16 + (z.type >= 2 ? 0.5 : 0)) this.addGround(z.x + 0.3, z.y + 0.3, 'ammo', 45);
   }
   die(p, killer) {
     if (this.mode === 'pvp') return this.diePvp(p, killer);
-    p.dead = true; p.hp = 0; p.shoot = false; p.deaths++;
+    p.dead = true; p.hp = 0; p.shoot = false; p.deaths++; p.burn = 0; p.fAcc = 0;
     this.graves.push({ pid: p.id, name: p.name, x: p.x, y: p.y, prog: 0 });
     if (p.weapon !== this.startWeapon) { this.addGround(p.x, p.y, p.weapon, 0); p.weapon = this.startWeapon; }
     p.bag = [];
@@ -811,7 +869,9 @@ class Room {
       this.updateWave();
       this.updateZombies();
       this.updateGraves();
+      this.updateGear();
     }
+    if (this.state === 'playing') this.updateBurn();
     if (this.state === 'playing') this.updateNades();
     for (let i = this.ground.length - 1; i >= 0; i--) {
       const g = this.ground[i];
@@ -830,6 +890,10 @@ class Room {
       if (!def) continue;
       if (def.type === 'ammo' && p.ammo < AMMO_MAX) p.ammo = Math.min(AMMO_MAX, p.ammo + (def.amount || 40));
       else if (def.type === 'grenade' && p.nades < NADE_MAX) p.nades = Math.min(NADE_MAX, p.nades + (def.amount || 1));
+      else if (def.type === 'turret' && p.turrets < CARRY.turret) p.turrets = Math.min(CARRY.turret, p.turrets + (def.amount || 1));
+      else if (def.type === 'barricade' && p.walls < CARRY.barricade) p.walls = Math.min(CARRY.barricade, p.walls + (def.amount || 3));
+      else if (def.type === 'mine' && p.mines < CARRY.mine) p.mines = Math.min(CARRY.mine, p.mines + (def.amount || 2));
+      else if (def.type === 'crate') this.openCrate(p);
       else if (def.type === 'armor' && (def.amount || 40) > p.armor) p.armor = Math.min(ARMOR_MAX, def.amount || 40);
       else if (def.type === 'heal' && this.mode === 'pvp' && p.hp < PLAYER_HP) { p.hp = Math.min(PLAYER_HP, p.hp + (def.heal || 25)); this.ev.push(['m', p.id]); }
       else continue;
@@ -837,6 +901,115 @@ class Room {
       this.gver++;
       this.ev.push(['u', p.id]);
       return;
+    }
+  }
+
+  // ---------- zombie-defense gear (co-op) ----------
+  toast(p, text) { if (p && p.conn && !p.bot) p.conn.send({ t: 'toast', text }); }
+  spawnSupplies(n = 4) {
+    if (!this.itemDefs.crate) return;
+    // random spots all over the map (inside the fort or out in the open), spread apart and away from the zombie spawns
+    const spots = [];
+    for (let placed = 0, tries = 0; placed < n && tries < 1500; tries++) {
+      const x = 1 + Math.floor(rand() * (this.W - 2)), y = 1 + Math.floor(rand() * (this.H - 2));
+      const gap = Math.max(2, 9 - tries / 150); // relax the spacing if the map is crowded
+      if (this.solidArr[y * this.W + x] || this.walls.has(y * this.W + x)) continue;
+      if (this.map.zombieSpawns.some((q) => Math.hypot(q.x - x, q.y - y) < 7)) continue;
+      if (spots.some((q) => Math.hypot(q.x - x, q.y - y) < gap)) continue;
+      if (this.ground.some((g) => Math.abs(g.x - x - 0.5) < 1.5 && Math.abs(g.y - y - 0.5) < 1.5)) continue;
+      spots.push({ x, y });
+      this.addGround(x + 0.5, y + 0.5, 'crate', 0); placed++;
+    }
+  }
+  openCrate(p) {
+    if (rand() < 0.5) { p.turrets = Math.min(CARRY.turret, p.turrets + 1); this.toast(p, 'Crate: Auto Turret [T]'); }
+    else { p.walls = Math.min(CARRY.barricade, p.walls + 5); this.toast(p, 'Crate: 5 Barricades [B]'); }
+  }
+  plantTurret(p) {
+    if (this.mode !== 'coop' || p.turrets <= 0) return;
+    if (this.turrets.length >= TURRET_MAX) return this.toast(p, 'Too many turrets (max ' + TURRET_MAX + ')');
+    const x = p.x + Math.cos(p.a) * 1.1, y = p.y + Math.sin(p.a) * 1.1;
+    if (this.blocked(x, y, 0.35) || this.turrets.some((t) => (t.x - x) ** 2 + (t.y - y) ** 2 < 0.8)) return this.toast(p, 'No room here');
+    const def = this.itemDefs.turret || {};
+    this.turrets.push({ id: this.nextId++, turret: true, owner: p.id, x, y, hp: def.hp || 140, maxHp: def.hp || 140, ammo: TURRET_AMMO, cd: 0.6, a: p.a, dead: false, r: 0.35 });
+    p.turrets--;
+    this.ev.push(['P', r2(x), r2(y)]);
+  }
+  plantWall(p) {
+    if (this.mode !== 'coop' || p.walls <= 0) return;
+    const tx = Math.floor(p.x + Math.cos(p.a) * 1.3), ty = Math.floor(p.y + Math.sin(p.a) * 1.3), idx = ty * this.W + tx;
+    if (tx < 1 || ty < 1 || tx >= this.W - 1 || ty >= this.H - 1 || this.solidArr[idx] || this.doorIdx.includes(idx)) return this.toast(p, 'Cannot build here');
+    const blockers = [...this.players.values()].filter((q) => !q.dead).concat(this.zombies, this.turrets);
+    for (const q of blockers) {
+      const nx = Math.max(tx, Math.min(q.x, tx + 1)), ny = Math.max(ty, Math.min(q.y, ty + 1));
+      if ((q.x - nx) ** 2 + (q.y - ny) ** 2 < (PLAYER_R + 0.08) ** 2) return this.toast(p, 'Something is in the way');
+    }
+    const hp = (this.itemDefs.barricade && this.itemDefs.barricade.hp) || 160;
+    this.walls.set(idx, { hp, maxHp: hp });
+    this.solidArr[idx] = 1; // (bullets pass: sightArr is untouched)
+    p.walls--;
+    this.ev.push(['W', idx, 1]);
+  }
+  plantMine(p) {
+    if (this.mode !== 'coop' || p.mines <= 0) return;
+    if (this.mines.some((m) => (m.x - p.x) ** 2 + (m.y - p.y) ** 2 < 0.6)) return this.toast(p, 'A mine is already here');
+    this.mines.push({ id: this.nextId++, owner: p.id, x: p.x, y: p.y, arm: MINE_ARM });
+    p.mines--;
+    this.ev.push(['P', r2(p.x), r2(p.y)]);
+  }
+  // X: take back the nearest barricade or turret within reach (mines can't be picked up once planted)
+  removeGear(p) {
+    if (this.mode !== 'coop') return;
+    let best = null, bd = 2.2 * 2.2;
+    for (const idx of this.walls.keys()) { const d = ((idx % this.W) + 0.5 - p.x) ** 2 + (((idx / this.W) | 0) + 0.5 - p.y) ** 2; if (d < bd) { bd = d; best = { wall: idx }; } }
+    for (const t of this.turrets) { const d = (t.x - p.x) ** 2 + (t.y - p.y) ** 2; if (d < bd) { bd = d; best = { turret: t }; } }
+    if (!best) return this.toast(p, 'Nothing to remove nearby');
+    if (best.turret) { this.turrets.splice(this.turrets.indexOf(best.turret), 1); p.turrets = Math.min(CARRY.turret, p.turrets + 1); }
+    else { this.dropWall(best.wall); p.walls = Math.min(CARRY.barricade, p.walls + 1); }
+  }
+  dropWall(idx) {
+    this.walls.delete(idx);
+    this.solidArr[idx] = this.baseSolid[idx];
+    this.ev.push(['W', idx, 0]);
+  }
+  damageWall(idx, dmg) {
+    const w = this.walls.get(idx);
+    if (!w) return;
+    w.hp -= dmg;
+    this.ev.push(['wh', idx]);
+    if (w.hp <= 0) { this.dropWall(idx); this.ev.push(['X', (idx % this.W) + 0.5, ((idx / this.W) | 0) + 0.5]); }
+  }
+  updateGear() {
+    const def = this.itemDefs.turret || {}, dmg = def.damage || 9, rate = def.rate || 4, range = def.range || 10;
+    for (let i = this.turrets.length - 1; i >= 0; i--) {
+      const t = this.turrets[i];
+      if (t.hp <= 0) { this.turrets.splice(i, 1); this.ev.push(['X', r2(t.x), r2(t.y)]); continue; }
+      t.cd -= DT;
+      let tgt = null, bd = range * range;
+      for (const z of this.zombies) {
+        if (z.dead) continue;
+        const d = (z.x - t.x) ** 2 + (z.y - t.y) ** 2;
+        if (d >= bd) continue;
+        const dist = Math.sqrt(d);
+        if (this.rayWall(t.x, t.y, (z.x - t.x) / dist, (z.y - t.y) / dist, dist) < dist - 0.3) continue; // (barricades do not block: bullets pass over)
+        bd = d; tgt = z;
+      }
+      if (!tgt) continue;
+      const dist = Math.sqrt(bd);
+      t.a = Math.atan2(tgt.y - t.y, tgt.x - t.x);
+      if (t.cd > 0 || t.ammo <= 0) continue;
+      t.cd = 1 / rate; t.ammo--;
+      const owner = this.players.get(t.owner) || { kills: 0 };
+      this.damageZombie(tgt, dmg, owner);
+      this.ev.push(['q', t.id, r2(t.x), r2(t.y), r2(t.a), r2(dist)]);
+    }
+    for (let i = this.mines.length - 1; i >= 0; i--) {
+      const m = this.mines[i];
+      if (m.arm > 0) { m.arm -= DT; continue; }
+      if (!this.zombies.some((z) => !z.dead && (z.x - m.x) ** 2 + (z.y - m.y) ** 2 < (z.r + 0.3) ** 2)) continue;
+      this.mines.splice(i, 1);
+      const md = this.itemDefs.mine || {};
+      this.explode({ x: m.x, y: m.y, owner: m.owner }, { damage: md.damage || 110, radius: md.radius || 2.4 });
     }
   }
 
@@ -921,17 +1094,21 @@ class Room {
       this.timer = BREAK_SECONDS;
       for (const p of this.alivePlayers()) { p.hp = Math.min(PLAYER_HP, p.hp + 30); p.ammo = Math.min(AMMO_MAX, p.ammo + WAVE_AMMO); }
       this.spawnMapItems(false);
+      if (this.mode === 'coop') { this.spawnSupplies(4); this.broadcast({ t: 'toast', text: '4 new supply crates dropped near the base!' }); }
       this.say(`Wave ${this.wave} cleared! Next wave in ${BREAK_SECONDS}s. Revive your friends!`);
     }
   }
   startWave() {
     this.wave++;
     const alive = Math.max(1, this.alivePlayers().length);
-    this.queue = Math.min(150, Math.round((6 + this.wave * 3) * this.d.cnt * (1 + 0.4 * (alive - 1))));
+    // twice as many zombies as before; every 5th wave brings bosses (wave 5: one, wave 10: two)
+    this.queue = Math.min(300, Math.round(2 * (6 + this.wave * 3) * this.d.cnt * (1 + 0.4 * (alive - 1))));
+    this.bosses = this.wave % 5 === 0 ? Math.min(4, this.wave / 5) : 0;
+    this.queue += this.bosses;
     this.spawnT = 0;
     this.phase = 'wave';
-    this.bossDone = false;
-    this.say(`Wave ${this.wave}${this.waves ? '/' + this.waves : ''} - ${this.queue} zombies incoming!`);
+    this.say(`Wave ${this.wave}${this.waves ? '/' + this.waves : ''} - ${this.queue} zombies incoming!` + (this.bosses ? ` BOSS WAVE: ${this.bosses} boss${this.bosses > 1 ? 'es' : ''}!` : ''));
+    if (this.bosses) this.broadcast({ t: 'toast', text: `BOSS WAVE! ${this.bosses} boss${this.bosses > 1 ? 'es' : ''} incoming` });
   }
   spawnZombie() {
     const alive = this.alivePlayers();
@@ -942,7 +1119,7 @@ class Room {
     const roll = rand();
     const tankC = this.wave >= 3 ? Math.min(0.16, (this.wave - 2) * 0.03) : 0;
     const runC = this.wave >= 2 ? Math.min(0.4, (this.wave - 1) * 0.07) : 0;
-    if (this.wave % 5 === 0 && !this.bossDone) { type = 2; this.bossDone = true; }
+    if (this.bosses > 0) { type = 3; this.bosses--; }
     else if (roll < tankC) type = 2;
     else if (roll < tankC + runC) type = 1;
     const t = ZTYPES[type];
@@ -951,6 +1128,46 @@ class Room {
       id: this.nextId++, type, x: s.x + 0.5 + (rand() - 0.5) * 0.6, y: s.y + 0.5 + (rand() - 0.5) * 0.6,
       hp, maxHp: hp, spd: t.spd * this.d.spd * (0.9 + rand() * 0.2), dmg: t.dmg, r: t.r, cd: 0, side: rand() < 0.5 ? 1 : -1, dead: false,
     });
+  }
+  // distance field (in tiles) from a target over walkable tiles; thru = barricades count as walkable (the way a zombie would have to chew through).
+  // Only used while barricades exist. Cached for a few ticks.
+  fieldFor(tgt, thru) {
+    if (!this.fieldCache || this.fieldCache.size > 60) this.fieldCache = new Map();
+    const key = (tgt.turret ? 't' : 'p') + tgt.id + (thru ? 'w' : '');
+    const c = this.fieldCache.get(key);
+    if (c && this.tickN - c.n < 6) return c.d;
+    const W = this.W, H = this.H, d = new Int16Array(W * H).fill(-1), q = new Int32Array(W * H);
+    const ok = (i) => !this.solidArr[i] || (thru && this.walls.has(i));
+    const s = Math.floor(tgt.y) * W + Math.floor(tgt.x);
+    let qh = 0, qt = 0;
+    d[s] = 0; q[qt++] = s;
+    while (qh < qt) {
+      const i = q[qh++], x = i % W, y = (i / W) | 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const j = ny * W + nx;
+        if (d[j] >= 0 || !ok(j)) continue;
+        if (dx && dy && (!ok(y * W + nx) || !ok(ny * W + x))) continue; // no corner cutting
+        d[j] = d[i] + 1; q[qt++] = j;
+      }
+    }
+    this.fieldCache.set(key, { n: this.tickN, d });
+    return d;
+  }
+  // the neighbouring tile (centre x,y and index) that is closest to the target, or null
+  flowStep(d, z) {
+    const W = this.W, cx = Math.floor(z.x), cy = Math.floor(z.y), cur = d[cy * W + cx];
+    if (cur <= 0) return null;
+    let best = null, bv = cur;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = cx + dx, ny = cy + dy;
+      if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= W || ny >= this.H) continue;
+      const v = d[ny * W + nx];
+      if (v >= 0 && v < bv) { bv = v; best = { x: nx + 0.5, y: ny + 0.5, idx: ny * W + nx }; }
+    }
+    return best;
   }
   updateZombies() {
     const alive = this.alivePlayers();
@@ -963,13 +1180,39 @@ class Room {
         const d = (p.x - z.x) ** 2 + (p.y - z.y) ** 2;
         if (d < bd) { bd = d; tgt = p; }
       }
+      for (const t of this.turrets) { // turrets draw zombies too
+        const d = (t.x - z.x) ** 2 + (t.y - z.y) ** 2;
+        if (d < bd) { bd = d; tgt = t; }
+      }
       if (!tgt) continue;
-      const dist = Math.sqrt(bd);
-      if (dist > z.r + PLAYER_R + 0.05) {
+      const dist = Math.sqrt(bd), tr = tgt.turret ? 0.35 : PLAYER_R;
+      if (dist > z.r + tr + 0.05) {
         const ang0 = Math.atan2(tgt.y - z.y, tgt.x - z.x);
         const step = z.spd * DT;
+        // barricades: zombies walk around them if there is a way to you, and only chew through when every way is blocked
+        let walled = false;
+        if (this.walls.size && dist > 1.2 && this.fieldFor(tgt, false)[Math.floor(z.y) * this.W + Math.floor(z.x)] < 0) {
+          const nxt = this.flowStep(this.fieldFor(tgt, true), z);
+          if (nxt) {
+            walled = true;
+            const a2 = Math.atan2(nxt.y - z.y, nxt.x - z.x);
+            if (this.walls.has(nxt.idx)) { // the next tile is a barricade: chew it when we are up against it
+              const bx = Math.max(nxt.idx % this.W, Math.min(z.x, (nxt.idx % this.W) + 1)), by = Math.max((nxt.idx / this.W) | 0, Math.min(z.y, ((nxt.idx / this.W) | 0) + 1));
+              if ((z.x - bx) ** 2 + (z.y - by) ** 2 < (z.r + 0.45) ** 2) { if (z.cd <= 0) { z.cd = 0.8; this.damageWall(nxt.idx, z.dmg * this.d.dmg * 1.2); } }
+              else this.move(z, Math.cos(a2) * step, Math.sin(a2) * step, z.r);
+            } else this.move(z, Math.cos(a2) * step, Math.sin(a2) * step, z.r);
+          }
+        }
+        if (!walled && this.walls.size && dist > 1.2) { // a way round exists: near a barricade follow the path field instead of feeling along it
+          let near = false;
+          const zx = Math.floor(z.x), zy = Math.floor(z.y);
+          for (let yy = zy - 2; yy <= zy + 2 && !near; yy++) for (let xx = zx - 2; xx <= zx + 2; xx++) if (this.walls.has(yy * this.W + xx)) { near = true; break; }
+          const nxt = near ? this.flowStep(this.fieldFor(tgt, false), z) : null;
+          if (nxt) { walled = true; const a2 = Math.atan2(nxt.y - z.y, nxt.x - z.x); this.move(z, Math.cos(a2) * step, Math.sin(a2) * step, z.r); }
+        }
         const offs = [0, z.side * 0.9, -z.side * 0.9, z.side * 1.7, -z.side * 1.7];
-        let done = false;
+        let done = walled;
+        const x00 = z.x, y00 = z.y;
         for (let i = 0; i < offs.length && !done; i++) {
           const a = ang0 + offs[i];
           const sx = z.x, sy = z.y;
@@ -979,12 +1222,19 @@ class Room {
             done = true;
           } else { z.x = sx; z.y = sy; }
         }
+        if (!walled && this.walls.size && Math.hypot(z.x - x00, z.y - y00) < step * 0.4) { // bumping a barricade while a way round exists: use the path field to slide round it
+          const nxt = this.flowStep(this.fieldFor(tgt, false), z);
+          if (nxt) { const a2 = Math.atan2(nxt.y - z.y, nxt.x - z.x); this.move(z, Math.cos(a2) * step, Math.sin(a2) * step, z.r); }
+        }
       }
-      if (dist <= z.r + PLAYER_R + 0.2 && z.cd <= 0 && !tgt.dead && !(tgt.dinv > 0)) {
+      if (dist <= z.r + tr + 0.2 && z.cd <= 0 && !tgt.dead && !(tgt.dinv > 0)) {
         z.cd = 0.8;
-        this.hurt(tgt, z.dmg * this.d.dmg);
-        this.ev.push(['h', tgt.id]);
-        if (tgt.hp <= 0) this.die(tgt);
+        if (tgt.turret) { tgt.hp -= z.dmg * this.d.dmg; this.ev.push(['th', tgt.id]); if (tgt.hp <= 0) tgt.dead = true; }
+        else {
+          this.hurt(tgt, z.dmg * this.d.dmg);
+          this.ev.push(['h', tgt.id]);
+          if (tgt.hp <= 0) this.die(tgt);
+        }
       }
     }
     // soft separation
@@ -1031,13 +1281,16 @@ class Room {
       z: this.zombies.map((z) => [z.id, r2(z.x), r2(z.y), z.type, Math.max(1, Math.round((z.hp / z.maxHp) * 100))]),
       gr: this.graves.map((g) => [g.pid, r2(g.x), r2(g.y), Math.round(g.prog * 10) / 10, g.name]),
       gn: this.nades.map((n) => [n.id, r2(n.x), r2(n.y)]),
+      tu: this.turrets.map((t) => [t.id, r2(t.x), r2(t.y), r2(t.a), Math.max(1, Math.round((t.hp / t.maxHp) * 100)), Math.round((t.ammo / TURRET_AMMO) * 100)]),
+      mn: this.mines.map((m) => [m.id, r2(m.x), r2(m.y), m.arm > 0 ? 0 : 1]),
+      wl: [...this.walls].filter(([, w]) => w.hp < w.maxHp).map(([i, w]) => [i, Math.max(1, Math.round((w.hp / w.maxHp) * 100))]),
       ev: this.ev,
     };
     const wStr = JSON.stringify({ n: this.wave, of: this.waves, ph: this.phase === 'wave' ? 1 : 0, tm: Math.ceil(Math.max(0, this.timer)), left: this.queue + this.zombies.length });
     const restStr = JSON.stringify(rest).slice(1);
     const all = [...this.players.values()];
-    const tup = all.map((p) => JSON.stringify([p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 || p.dinv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0, Math.round(p.armor), p.dashT > 0 ? 1 : 0, p.boostT > 0 ? 1 : 0, p.nades, 0, Math.round((p.heat || 0) * 100), p.lock > 0 ? 1 : 0]));
-    const hid = all.map((p) => JSON.stringify([p.id, 0, 0, 0, Math.max(0, Math.round(p.hp)), p.weapon, 0, 0, p.kills, 0, 0, p.deaths, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0]));
+    const tup = all.map((p) => JSON.stringify([p.id, r2(p.x), r2(p.y), r2(p.a), Math.max(0, Math.round(p.hp)), p.weapon, p.dead ? 1 : 0, p.bag.length, p.kills, Math.ceil(Math.max(0, p.rs)), p.inv > 0 || p.dinv > 0 ? 1 : 0, p.deaths, p.ammo, Math.round(p.stam), p.exh ? 1 : 0, Math.round(p.armor), p.dashT > 0 ? 1 : 0, p.boostT > 0 ? 1 : 0, p.nades, 0, Math.round((p.heat || 0) * 100), p.lock > 0 ? 1 : 0, p.turrets, p.walls, p.mines]));
+    const hid = all.map((p) => JSON.stringify([p.id, 0, 0, 0, Math.max(0, Math.round(p.hp)), p.weapon, 0, 0, p.kills, 0, 0, p.deaths, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]));
     const gStr = JSON.stringify(this.ground.map((g) => [g.id, r2(g.x), r2(g.y), g.item]));
     const open = this.mode === 'pvp' ? all.some((q) => !q.dead && this.inBush(q)) : false;
     const everyone = '[' + tup.join(',') + ']';
