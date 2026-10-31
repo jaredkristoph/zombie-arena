@@ -733,11 +733,21 @@ function inputStep(dt) {
   const me = S.me;
   const typing = document.body.classList.contains('chat-open');
   let dx = 0, dy = 0;
+  let keyed = false;
   if (!typing && !me.dead && !settingsOpen()) {
-    if (bindDown('left') || keys.ArrowLeft) dx -= 1;
-    if (bindDown('right') || keys.ArrowRight) dx += 1;
-    if (bindDown('up') || keys.ArrowUp) dy -= 1;
-    if (bindDown('down') || keys.ArrowDown) dy += 1;
+    if (bindDown('left') || keys.ArrowLeft) { dx -= 1; keyed = true; }
+    if (bindDown('right') || keys.ArrowRight) { dx += 1; keyed = true; }
+    if (bindDown('up') || keys.ArrowUp) { dy -= 1; keyed = true; }
+    if (bindDown('down') || keys.ArrowDown) { dy += 1; keyed = true; }
+    // settings: walk toward the cursor when no keyboard move is held
+    if (!keyed && S.set.mouseWalk && S.mouse.has) {
+      const g = W3.screenToGround(S.mouse.x, S.mouse.y);
+      if (g) {
+        const mx = g.x - me.vx, my = g.y - me.vy;
+        const md = Math.hypot(mx, my);
+        if (md > 0.45) { dx = mx / md; dy = my / md; }
+      }
+    }
   }
   const len = Math.hypot(dx, dy);
   if (len > 0) { dx /= len; dy /= len; }
@@ -988,11 +998,11 @@ function updateHud(me, myGrave) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 
-const BUILD = 'b38'; // shown in the corner so you can check every window runs the same version
+const BUILD = 'b39'; // shown in the corner so you can check every window runs the same version
 // ---------- settings (gear button, top right; on the menu, in the room lobby and in game) ----------
 S.dashSim = new Map(); S.dashFade = new Map();
 globalThis.__za = S; S.W3 = W3; S.blockedAt = (x, y) => blocked(S.grid, x, y, PLAYER_R); // (debug / tests)
-S.set = { pan: 40, vol: 80, mute: false, calm: false };
+S.set = { pan: 40, vol: 80, mute: false, calm: false, mouseWalk: false };
 try { if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) S.set.calm = true; } catch (e) { /* ignore */ }
 try { Object.assign(S.set, JSON.parse(localStorage.getItem('za-settings2') || '{}')); } catch (e) { /* ignore */ }
 function saveSettings() { try { localStorage.setItem('za-settings2', JSON.stringify(S.set)); } catch (e) { /* ignore */ } }
@@ -1001,6 +1011,7 @@ function applySettings() {
   $('set-vol').value = S.set.vol; $('vol-val').textContent = S.set.vol + '%';
   $('set-mute').checked = !!S.set.mute;
   $('set-calm').checked = !!S.set.calm; document.body.classList.toggle('calm', !!S.set.calm); W3.setCalm(S.set.calm);
+  $('set-mousewalk').checked = !!S.set.mouseWalk;
   setVolume(S.set.vol / 100); setMuted(S.set.mute);
 }
 function toggleSettings(force) {
@@ -1022,6 +1033,10 @@ $('set-vol').oninput = () => { S.set.vol = Number($('set-vol').value); applySett
 $('set-pan').onchange = $('set-vol').onchange = () => { document.activeElement && document.activeElement.blur && document.activeElement.blur(); };
 $('set-calm').onchange = () => { S.set.calm = $('set-calm').checked; applySettings(); saveSettings(); $('set-calm').blur(); };
 $('set-mute').onchange = () => { S.set.mute = $('set-mute').checked; applySettings(); saveSettings(); $('set-mute').blur(); };
+$('set-mousewalk').onchange = () => {
+  S.set.mouseWalk = $('set-mousewalk').checked; applySettings(); saveSettings(); $('set-mousewalk').blur();
+  toast(S.set.mouseWalk ? 'Walk toward mouse: on' : 'Walk toward mouse: off');
+};
 $('btn-leave-game').onclick = () => { toggleSettings(false); send({ t: 'leave' }); };
 $('btn-end-game').onclick = () => { toggleSettings(false); send({ t: 'endgame' }); };
 $('bind-reset').onclick = () => {

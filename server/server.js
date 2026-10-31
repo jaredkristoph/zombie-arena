@@ -309,7 +309,7 @@ function onMessage(c, m) {
         takeOver(c, back.room, back.player, back.old);
       } else if (!c.token) c.token = crypto.randomBytes(12).toString('hex');
       liveByToken.set(c.token, c);
-      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b38', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
+      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b39', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
       if (back) { back.room.resume(back.player); pushRooms(); return; }
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;
