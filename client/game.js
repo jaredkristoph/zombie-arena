@@ -478,10 +478,148 @@ function fx(ev) {
   }
 }
 
-// ---------- input ----------
-const GAME_KEYS = new Set(['ShiftLeft', 'ShiftRight', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
+// ---------- input + customizable key bindings ----------
+const DEFAULT_BINDS = {
+  up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD',
+  dash: 'ShiftLeft', shoot: 'Space',
+  equip: 'KeyE', nade: 'KeyF', drop: 'KeyQ', dropheal: 'KeyG', heal: 'KeyH',
+  turret: 'KeyT', wall: 'KeyB', mine: 'KeyN', remove: 'KeyX', mute: 'KeyM',
+};
+const BIND_LABELS = {
+  up: 'Move up', down: 'Move down', left: 'Move left', right: 'Move right',
+  dash: 'Dash', shoot: 'Shoot',
+  equip: 'Equip / doors', nade: 'Throw grenade', drop: 'Drop gun', dropheal: 'Drop heal', heal: 'Use heal',
+  turret: 'Plant turret', wall: 'Barricade', mine: 'Plant mine', remove: 'Remove build', mute: 'Mute',
+};
+const HOLD_BINDS = new Set(['up', 'down', 'left', 'right', 'dash', 'shoot']);
+const FIXED_CODES = new Set(['Escape', 'Enter', 'NumpadEnter', 'Tab', 'F5', 'F11', 'F12', 'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight', 'AltLeft', 'AltRight']);
+S.binds = { ...DEFAULT_BINDS };
+S.rebind = null; // action id while listening for a new key in Settings
+try {
+  const saved = JSON.parse(localStorage.getItem('za-binds') || '{}');
+  if (saved && typeof saved === 'object') {
+    for (const k of Object.keys(DEFAULT_BINDS)) if (typeof saved[k] === 'string') S.binds[k] = saved[k];
+  }
+} catch (e) { /* ignore */ }
+function saveBinds() { try { localStorage.setItem('za-binds', JSON.stringify(S.binds)); } catch (e) { /* ignore */ } }
+const MOUSE_NAMES = { Mouse0: 'Left click', Mouse1: 'Middle click', Mouse2: 'Right click', Mouse3: 'Mouse 4', Mouse4: 'Mouse 5' };
+function mouseCode(button) { return 'Mouse' + button; }
+function isMouseCode(code) { return typeof code === 'string' && code.startsWith('Mouse'); }
+function codeLabel(code) {
+  if (!code) return '?';
+  if (MOUSE_NAMES[code]) return MOUSE_NAMES[code];
+  if (code === 'Space') return 'Space';
+  if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift';
+  if (code.startsWith('Key') && code.length === 4) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Arrow')) return code.slice(5);
+  if (code.startsWith('Numpad')) return 'Num' + code.slice(6);
+  return code.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+function codesFor(action) {
+  const c = S.binds[action];
+  if (!c) return [];
+  if (c === 'ShiftLeft' || c === 'ShiftRight') return ['ShiftLeft', 'ShiftRight'];
+  return [c];
+}
+function bindDown(action) { return codesFor(action).some((c) => keys[c]); }
+function isBind(e, action) { return codesFor(action).includes(e.code); }
+function holdCodes() {
+  const set = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+  for (const a of HOLD_BINDS) for (const c of codesFor(a)) if (!isMouseCode(c)) set.add(c);
+  return set;
+}
+function actionForCode(code) {
+  for (const [a, c] of Object.entries(S.binds)) {
+    if (c === code) return a;
+    if ((code === 'ShiftLeft' || code === 'ShiftRight') && (c === 'ShiftLeft' || c === 'ShiftRight')) return a;
+  }
+  return null;
+}
+// left click shoots by default until Mouse0 is bound to something else
+function unboundLeftShoot() { return !!keys.Mouse0 && !actionForCode('Mouse0'); }
+function settingsOpen() { const d = $('settings-panel').style.display; return d === 'flex' || d === 'block'; }
+function cancelRebind() { S.rebind = null; renderBinds(); }
+function renderBinds() {
+  const box = $('bind-list');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const [action, label] of Object.entries(BIND_LABELS)) {
+    const row = document.createElement('div');
+    row.className = 'bind-row';
+    const name = document.createElement('span');
+    name.textContent = label;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.action = action;
+    if (S.rebind === action) { btn.className = 'listening'; btn.textContent = 'Press…'; }
+    else btn.textContent = codeLabel(S.binds[action]);
+    btn.onclick = (ev) => {
+      ev.preventDefault();
+      S.rebind = S.rebind === action ? null : action;
+      renderBinds();
+      if (S.rebind) toast('Press a key or mouse button for ' + label + ' (Esc to cancel)');
+    };
+    // don't steal the click used to start listening; mouse bind is captured on window while listening
+    btn.onmousedown = (ev) => { if (!S.rebind) ev.preventDefault(); };
+    row.appendChild(name); row.appendChild(btn);
+    box.appendChild(row);
+  }
+}
+function assignBind(action, code) {
+  if (!DEFAULT_BINDS[action] || FIXED_CODES.has(code)) return false;
+  // if another action already uses this key / mouse button, swap
+  for (const [other, c] of Object.entries(S.binds)) {
+    if (other === action) continue;
+    const clash = c === code
+      || ((code === 'ShiftLeft' || code === 'ShiftRight') && (c === 'ShiftLeft' || c === 'ShiftRight'));
+    if (clash) S.binds[other] = S.binds[action];
+  }
+  S.binds[action] = (code === 'ShiftRight') ? 'ShiftLeft' : code;
+  saveBinds();
+  S.rebind = null;
+  renderBinds();
+  updateHelpKeys();
+  toast(BIND_LABELS[action] + ' → ' + codeLabel(S.binds[action]));
+  return true;
+}
+function firePressAction(action) {
+  if (action === 'equip') { send({ t: 'act', k: 'equip' }); return; }
+  if (action === 'nade') { send({ t: 'act', k: 'nade' }); return; }
+  if (action === 'drop') { S.building = false; send({ t: 'act', k: 'drop' }); return; }
+  if (action === 'dropheal') { send({ t: 'act', k: 'dropheal' }); return; }
+  if (action === 'heal') { send({ t: 'act', k: 'heal' }); return; }
+  if (action === 'turret') { send({ t: 'act', k: 'turret' }); return; }
+  if (action === 'wall') {
+    if (me0().dead) return;
+    if (!S.building) {
+      if (!(me0().walls > 0)) { toast('No barricades. Open supply crates!'); return; }
+      S.building = true; toast('Press ' + codeLabel(S.binds.wall) + ' again to place, Esc to cancel'); return;
+    }
+    const t = buildSpot();
+    if (t.ok) { send({ t: 'act', k: 'wall' }); S.building = false; } else toast('Blocked - move or aim somewhere else');
+    return;
+  }
+  if (action === 'mine') { send({ t: 'act', k: 'mine' }); return; }
+  if (action === 'remove') { send({ t: 'act', k: 'remove' }); return; }
+  if (action === 'mute') { const mu = toggleMute(); toast(mu ? 'Sound off' : 'Sound on'); S.set.mute = mu; $('set-mute').checked = mu; saveSettings(); }
+}
+function updateHelpKeys() {
+  const h = $('help');
+  if (!h) return;
+  const k = (a) => codeLabel(S.binds[a]);
+  h.innerHTML = `${k('up')}${k('left')}${k('down')}${k('right')} / Arrows move &middot; ${k('dash')} dash-roll (1s invincible, 3s cooldown) &middot; MOUSE aim &middot; ${k('shoot')} shoot (limited ammo - grab ammo packs) &middot; ${k('equip')} equip / open &amp; close doors &middot; ${k('nade')} throw grenade (gatling overheats, launcher has a slow reload, katana makes you run 1.5x) &middot; Co-op: ${k('turret')} turret &middot; ${k('wall')} barricade &middot; ${k('mine')} mine &middot; ${k('remove')} remove &middot; ${k('drop')} drop gun &middot; ${k('heal')} heal &middot; ${k('dropheal')} drop heal &middot; ENTER chat &middot; ${k('mute')} mute <span class="tiny">(edit keys / mouse in Settings)</span>`;
+}
+
 window.addEventListener('keydown', (e) => {
   unlockAudio();
+  if (S.rebind) {
+    e.preventDefault();
+    if (e.code === 'Escape') { cancelRebind(); toast('Rebind cancelled'); return; }
+    if (e.repeat) return;
+    if (!assignBind(S.rebind, e.code)) toast('That key is reserved');
+    return;
+  }
   const typing = document.activeElement && (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT');
   if (e.code === 'Enter' || e.code === 'NumpadEnter') {
     if (!typing) { if (S.inGame) openChat(); else dom.chat.focus(); e.preventDefault(); }
@@ -491,39 +629,29 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') changeAcc(e.code === 'ArrowLeft' ? -1 : 1); else changeFit(e.code === 'ArrowUp' ? -1 : 1);
     e.preventDefault(); return;
   }
-  if (!S.inGame || typing) return;
+  if (e.code === 'Escape') {
+    if (typing) return;
+    if (S.building) { S.building = false; e.preventDefault(); return; }
+    if (document.body.classList.contains('chat-open')) { closeChat(); e.preventDefault(); return; }
+    toggleSettings(); e.preventDefault(); return;
+  }
+  if (settingsOpen() || !S.inGame || typing) return;
   if (S.me.dead && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) { if (!e.repeat) cycleSpectate(e.code === 'ArrowLeft' ? -1 : 1); e.preventDefault(); return; }
-  if (GAME_KEYS.has(e.code)) {
+  if (holdCodes().has(e.code)) {
     keys[e.code] = true; e.preventDefault();
     if (e.code.startsWith('Arrow')) setAimMode('keys'); // arrows = keyboard-only play; moving the mouse switches back
     return;
   }
   if (e.repeat) return;
-  switch (e.code) {
-    case 'KeyE': send({ t: 'act', k: 'equip' }); break;
-    case 'KeyF': send({ t: 'act', k: 'nade' }); break;
-    case 'KeyQ': S.building = false; send({ t: 'act', k: 'drop' }); break;
-    case 'KeyG': send({ t: 'act', k: 'dropheal' }); break;
-    case 'KeyH': send({ t: 'act', k: 'heal' }); break;
-    case 'KeyT': send({ t: 'act', k: 'turret' }); break;
-    case 'KeyB': { // first press: show where it would go (blue = fits, red = blocked); second press: place it
-      if (me0().dead) break;
-      if (!S.building) { if (!(me0().walls > 0)) { toast('No barricades. Open supply crates!'); break; } S.building = true; toast('Press B again to place, Esc to cancel'); break; }
-      const t = buildSpot();
-      if (t.ok) { send({ t: 'act', k: 'wall' }); S.building = false; } else toast('Blocked - move or aim somewhere else');
-      break;
-    }
-    case 'KeyN': send({ t: 'act', k: 'mine' }); break;
-    case 'KeyX': send({ t: 'act', k: 'remove' }); break;
-    case 'KeyM': { const mu = toggleMute(); toast(mu ? 'Sound off' : 'Sound on'); S.set.mute = mu; $('set-mute').checked = mu; saveSettings(); break; }
-    case 'Tab': cycleSpectate(e.shiftKey ? -1 : 1); e.preventDefault(); break;
-    case 'Escape': if (S.building) { S.building = false; break; } if (document.body.classList.contains('chat-open')) closeChat(); else toggleSettings(); break;
-    default:
+  for (const action of Object.keys(BIND_LABELS)) {
+    if (HOLD_BINDS.has(action)) continue;
+    if (isBind(e, action)) { firePressAction(action); return; }
   }
+  if (e.code === 'Tab') { cycleSpectate(e.shiftKey ? -1 : 1); e.preventDefault(); }
 });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; S.mouse.down = false; });
-// mouse: aim at the cursor, hold left button to shoot
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; S.mouse.down = false; S.rebind = null; });
+// mouse: aim at the cursor; buttons are bindable (left / right / middle / side)
 function setAimMode(mode) {
   if (S.aimMode === mode) return;
   S.aimMode = mode;
@@ -539,14 +667,38 @@ window.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mousedown', (e) => {
   unlockAudio();
-  if (e.button !== 0 || !S.inGame || e.target !== $('c')) return;
-  if (S.me.dead) { cycleSpectate(1); e.preventDefault(); return; }
-  S.mouse.x = e.clientX; S.mouse.y = e.clientY; S.mouse.has = true; S.mouse.down = true;
+  const code = mouseCode(e.button);
+  // while rebinding, any mouse button (including on the settings panel) assigns the bind
+  if (S.rebind) {
+    e.preventDefault();
+    if (!assignBind(S.rebind, code)) toast('That button is reserved');
+    return;
+  }
+  // side buttons: stop browser back/forward
+  if (e.button >= 3) e.preventDefault();
+  if (settingsOpen()) return;
+  if (!S.inGame) return;
+  // UI clicks outside the canvas shouldn't fire game binds
+  if (e.target !== $('c') && e.button === 0) return;
+  if (e.target !== $('c') && e.button < 3) return;
+  keys[code] = true;
+  S.mouse.x = e.clientX; S.mouse.y = e.clientY; S.mouse.has = true;
+  if (e.button === 0) S.mouse.down = true;
   setAimMode('mouse');
   e.preventDefault();
+  if (S.me.dead) { if (e.button === 0) cycleSpectate(1); return; }
+  const action = actionForCode(code);
+  if (action && !HOLD_BINDS.has(action)) firePressAction(action);
 });
-window.addEventListener('mouseup', (e) => { if (e.button === 0) S.mouse.down = false; });
-window.addEventListener('contextmenu', (e) => { if (S.inGame && e.target === $('c')) e.preventDefault(); });
+window.addEventListener('mouseup', (e) => {
+  const code = mouseCode(e.button);
+  keys[code] = false;
+  if (e.button === 0) S.mouse.down = false;
+});
+window.addEventListener('auxclick', (e) => { if (S.inGame || S.rebind) e.preventDefault(); });
+window.addEventListener('contextmenu', (e) => {
+  if (S.rebind || (S.inGame && (e.target === $('c') || actionForCode('Mouse2')))) e.preventDefault();
+});
 
 // while dead you watch a player who is still alive; Tab / arrow keys / mouse click switch to the next or previous one
 function cycleSpectate(dir = 1) {
@@ -581,16 +733,16 @@ function inputStep(dt) {
   const me = S.me;
   const typing = document.body.classList.contains('chat-open');
   let dx = 0, dy = 0;
-  if (!typing && !me.dead) {
-    if (keys.KeyA || keys.ArrowLeft) dx -= 1;
-    if (keys.KeyD || keys.ArrowRight) dx += 1;
-    if (keys.KeyW || keys.ArrowUp) dy -= 1;
-    if (keys.KeyS || keys.ArrowDown) dy += 1;
+  if (!typing && !me.dead && !settingsOpen()) {
+    if (bindDown('left') || keys.ArrowLeft) dx -= 1;
+    if (bindDown('right') || keys.ArrowRight) dx += 1;
+    if (bindDown('up') || keys.ArrowUp) dy -= 1;
+    if (bindDown('down') || keys.ArrowDown) dy += 1;
   }
   const len = Math.hypot(dx, dy);
   if (len > 0) { dx /= len; dy /= len; }
-  // dash (Shift, one press): a forward roll with 1s of invincibility, then a cooldown (the stamina bar is the dash charge)
-  const shiftDown = !typing && !me.dead && !!(keys.ShiftLeft || keys.ShiftRight);
+  // dash (default Shift, one press): a forward roll with 1s of invincibility, then a cooldown (the stamina bar is the dash charge)
+  const shiftDown = !typing && !me.dead && !settingsOpen() && bindDown('dash');
   let startDash = false;
   if (shiftDown && !S.dashKey && S.serverDash && S.dashT <= 0 && S.stam >= STAM_MAX - 1) {
     startDash = true; S.dashT = DASH_TIME; S.stam = 0; S.dashSent = (S.dashSent || 0) + 1; readout();
@@ -602,7 +754,7 @@ function inputStep(dt) {
   if (S.dashT <= 0) S.stam = Math.min(STAM_MAX, S.stam + (STAM_MAX / DASH_CD) * dt);
   const rolling = S.dashT > 0;
   if (rolling) { dx = S.ddx; dy = S.ddy; } // while rolling you run fast in the dash direction
-  const sh = !typing && !me.dead && !rolling && (keys.Space || S.mouse.down) ? 1 : 0;
+  const sh = !typing && !me.dead && !settingsOpen() && !rolling && (bindDown('shoot') || unboundLeftShoot()) ? 1 : 0;
   // ---- aiming: pick a target angle, then turn toward it smoothly (never snap) ----
   if (!me.dead) {
     let target = null, rate = 14;
@@ -836,7 +988,7 @@ function updateHud(me, myGrave) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 
-const BUILD = 'b36'; // shown in the corner so you can check every window runs the same version
+const BUILD = 'b38'; // shown in the corner so you can check every window runs the same version
 // ---------- settings (gear button, top right; on the menu, in the room lobby and in game) ----------
 S.dashSim = new Map(); S.dashFade = new Map();
 globalThis.__za = S; S.W3 = W3; S.blockedAt = (x, y) => blocked(S.grid, x, y, PLAYER_R); // (debug / tests)
@@ -853,10 +1005,14 @@ function applySettings() {
 }
 function toggleSettings(force) {
   const p = $('settings-panel');
-  const open = force === undefined ? p.style.display === 'none' : force;
-  p.style.display = open ? 'flex' : 'none';
-  if (open) $('btn-end-game').classList.toggle('on', !!(S.room && S.room.host === S.id));
-  if (open) for (const k in keys) keys[k] = false;
+  const next = force === undefined ? p.style.display === 'none' : !!force;
+  p.style.display = next ? 'flex' : 'none';
+  if (!next) cancelRebind();
+  if (next) {
+    $('btn-end-game').classList.toggle('on', !!(S.room && S.room.host === S.id));
+    renderBinds();
+    for (const k in keys) keys[k] = false;
+  }
 }
 $('settings-btn').onclick = () => toggleSettings();
 $('settings-btn').onmousedown = (e) => e.preventDefault(); // keep keyboard focus off the button so Space still shoots
@@ -868,7 +1024,12 @@ $('set-calm').onchange = () => { S.set.calm = $('set-calm').checked; applySettin
 $('set-mute').onchange = () => { S.set.mute = $('set-mute').checked; applySettings(); saveSettings(); $('set-mute').blur(); };
 $('btn-leave-game').onclick = () => { toggleSettings(false); send({ t: 'leave' }); };
 $('btn-end-game').onclick = () => { toggleSettings(false); send({ t: 'endgame' }); };
+$('bind-reset').onclick = () => {
+  S.binds = { ...DEFAULT_BINDS }; saveBinds(); cancelRebind(); renderBinds(); updateHelpKeys(); toast('Keys reset to default');
+};
 applySettings();
+renderBinds();
+updateHelpKeys();
 
 // go
 setScreen('menu');

@@ -148,11 +148,17 @@ label.chk { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-si
 /* settings */
 #settings-btn { position: fixed; top: 10px; right: 12px; z-index: 30; width: 38px; height: 38px; padding: 0; font-size: 20px; border-radius: 12px; display: block; }
 body.screen-over #settings-btn { display: none; }
-#settings-panel { position: fixed; top: 56px; right: 12px; z-index: 30; width: 270px; background: rgba(18, 12, 44, .96); border: 2px solid var(--line);
+#settings-panel { position: fixed; top: 56px; right: 12px; z-index: 30; width: 300px; max-height: calc(100vh - 72px); overflow-y: auto; background: rgba(18, 12, 44, .96); border: 2px solid var(--line);
   border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 30px #000a; }
 #settings-panel h3 { margin: 0; color: var(--yellow); letter-spacing: 2px; text-transform: uppercase; font-size: 14px; }
 #settings-panel label { font-weight: 700; font-size: 14px; } #settings-panel label b { float: right; color: var(--yellow); }
 #settings-panel input[type=range] { padding: 0; margin-top: 6px; accent-color: var(--green); }
+.bind-head { margin-top: 4px; padding-top: 8px; border-top: 2px solid var(--line); font-weight: 800; color: var(--yellow); letter-spacing: 1px; text-transform: uppercase; font-size: 12px; }
+#bind-list { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; }
+.bind-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 700; font-size: 13px; }
+.bind-row span { flex: 1; min-width: 0; }
+.bind-row button { min-width: 88px; padding: 4px 8px; font-size: 12px; font-weight: 800; }
+.bind-row button.listening { background: var(--yellow); color: #1a1030; border-color: var(--yellow); animation: none; }
 #set-game { display: none; flex-direction: column; gap: 6px; border-top: 2px solid var(--line); padding-top: 8px; }
 body.screen-game #set-game { display: flex; }
 #btn-end-game { display: none; } #btn-end-game.on { display: block; }
