@@ -1,6 +1,7 @@
 'use strict';
 // Authoritative game room: players, zombies, waves, items, graves, chat.
 const { buildTerrain, canStep } = require('./terrain');
+const Office = require('./office');
 
 const TICK_HZ = 20;
 const DT = 1 / TICK_HZ;
@@ -67,9 +68,10 @@ class Room {
     this.difficulty = DIFF[cfg.difficulty] ? cfg.difficulty : 'normal';
     this.d = DIFF[this.difficulty];
     this.maxPlayers = cfg.maxPlayers;
-    this.mode = cfg.mode === 'pvp' ? 'pvp' : 'coop';
+    this.mode = cfg.mode === 'pvp' ? 'pvp' : cfg.mode === 'office' ? 'office' : 'coop';
     this.killLimit = Math.max(0, Math.min(200, Math.round(Number(cfg.killLimit)) || 0)); // pvp only, 0 = endless
     this.teams = this.mode === 'pvp' && cfg.teams === true; // team deathmatch: Red vs Blue, no friendly fire
+    if (this.mode === 'office') Office.attachOffice(this);
     this.botSeq = 0;
     this.reviveSeconds = cfg.reviveSeconds || REVIVE_SECONDS;
     this.W = this.map.w;
@@ -156,16 +158,20 @@ class Room {
       id: this.id, name: this.name, map: this.map.name, waves: this.waves, difficulty: this.difficulty,
       max: this.maxPlayers, count: this.players.size, state: this.state, host: this.hostId,
       mode: this.mode, teams: this.teams, killLimit: this.killLimit, bots: this.botCount(), drops: this.deathDrop, start: this.startWeapon, weapons: [...this.allowed],
+      company: this.mode === 'office' ? this.company : undefined,
     };
   }
   sendRoom() {
     this.broadcast({
       t: 'room', room: this.info(),
-      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, color: p.color, bot: p.bot ? 1 : 0, acc: p.acc, fit: p.fit, team: this.teams ? p.team : -1 })),
+      players: [...this.players.values()].map((p) => ({ id: p.id, name: p.name, color: p.color, bot: p.bot ? 1 : 0, acc: p.acc, fit: p.fit, team: this.teams ? p.team : -1, role: p.role || '' })),
+      roles: this.mode === 'office' ? Office.roleList() : undefined,
     });
   }
   initMsg(p) {
-    return { t: 'start', doors: [...this.doorOpen], walls: [...this.walls.keys()], you: p.id, map: this.map, items: this.itemDefs, room: this.info(), revive: this.reviveSeconds, pickR: PICK_R, graveR: GRAVE_R, respawn: RESPAWN_SECONDS };
+    const msg = { t: 'start', doors: [...this.doorOpen], walls: [...this.walls.keys()], you: p.id, map: this.map, items: this.itemDefs, room: this.info(), revive: this.reviveSeconds, pickR: PICK_R, graveR: GRAVE_R, respawn: RESPAWN_SECONDS };
+    if (this.mode === 'office') msg.office = Office.officeState(this, p);
+    return msg;
   }
   humans() {
     let n = 0;
@@ -174,25 +180,27 @@ class Room {
   }
   botCount() { return this.players.size - this.humans(); }
 
-  // ---------- bots (pvp; the host adds them in the room lobby) ----------
+  // ---------- bots (pvp hunters, or office AI interns) ----------
   addBot(by) {
-    if (this.mode !== 'pvp') return 'Bots are only available in PvP rooms';
+    if (this.mode !== 'pvp' && this.mode !== 'office') return 'Bots are only available in PvP or Office rooms';
     if (this.state !== 'lobby' || by !== this.hostId) return 'Only the host can add bots from the room lobby';
     if (this.players.size >= this.maxPlayers) return 'Room is full';
     if (this.botCount() >= MAX_BOTS) return 'Too many bots';
     const used = new Set([...this.players.values()].map((p) => p.name));
     let name = '';
+    const prefix = this.mode === 'office' ? 'Intern ' : 'Bot ';
     for (let i = 0; i < 40 && !name; i++) {
-      const n = 'Bot ' + BOT_NAMES[Math.floor(rand() * BOT_NAMES.length)];
+      const n = prefix + BOT_NAMES[Math.floor(rand() * BOT_NAMES.length)];
       if (!used.has(n)) name = n;
     }
-    if (!name) name = 'Bot ' + (this.botSeq + 1);
+    if (!name) name = prefix + (this.botSeq + 1);
     const conn = { id: 100000 + ++this.botSeq, name, raw() {}, send() {}, bot: true };
     const p = this.join(conn);
     p.bot = true;
     p.acc = Math.floor(rand() * ACC_COUNT);
     p.fit = Math.floor(rand() * FIT_COUNT);
     p.ai = { path: [], pathT: 0, tgt: null, seeT: 0, strafe: rand() < 0.5 ? 1 : -1, strafeT: 1, dest: null, aimErr: 0, errT: 0 };
+    if (this.mode === 'office') { p.role = 'intern'; Office.initPlayerOffice(this, p); }
     this.sendRoom();
     return null;
   }
@@ -229,7 +237,9 @@ class Room {
       id: conn.id, name: conn.name, color, conn, x: 0, y: 0, a: 0, hp: PLAYER_HP, weapon: this.startWeapon, bag: [],
       dead: false, cd: 0, shoot: false, kills: 0, seq: 0, budget: 0.3, lastIn: Date.now(), gsent: -1, deaths: 0,
       rs: 0, inv: 0, aimSet: false, ammo: AMMO_START, stam: STAM_MAX, exh: false, sprinting: false, sDelay: 0, dashT: 0, dashLeft: 0, boostT: 0, dinv: 0, acc: (conn.acc | 0) % ACC_COUNT, fit: (conn.fit | 0) % FIT_COUNT, armor: 0,
+      role: this.mode === 'office' ? 'intern' : '', cash: 0, task: null,
     };
+    if (this.mode === 'office') Office.initPlayerOffice(this, p);
     this.players.set(p.id, p);
     if (this.hostId == null) this.hostId = p.id;
     conn.player = p;
@@ -370,12 +380,23 @@ class Room {
     this.resetWorld();
     this.state = 'playing';
     this.pvpT = PVP_ITEM_EVERY;
+    if (this.mode === 'office') Office.attachOffice(this);
     if (this.mode === 'pvp') for (const p of this.players.values()) p.dead = true; // so spawns are spread out
-    for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.gsent = -1; p.inv = 0; if (p.ai) { p.ai.path = []; p.ai.tgt = null; } this.placePlayer(p); if (this.mode === 'pvp') p.inv = SPAWN_PROTECT; }
-    this.spawnMapItems(true);
+    for (const p of this.players.values()) {
+      p.kills = 0; p.deaths = 0; p.gsent = -1; p.inv = 0;
+      if (p.ai) { p.ai.path = []; p.ai.tgt = null; }
+      if (this.mode === 'office') Office.initPlayerOffice(this, p);
+      this.placePlayer(p);
+      if (this.mode === 'pvp') p.inv = SPAWN_PROTECT;
+    }
+    if (this.mode !== 'office') this.spawnMapItems(true);
     if (this.mode === 'coop') this.spawnSupplies();
     for (const p of this.players.values()) p.conn.send(this.initMsg(p));
-    if (this.mode === 'pvp') {
+    if (this.mode === 'office') {
+      this.say(`Office open on ${this.map.name}! Press E at your station for a mini-game (random difficulty). Meet in the Meeting Room (top-right) with 2+ people for standups. Shop buys furniture. Survive ${Office.SPRINTS_WIN} sprints — host can add AI interns.`);
+      this.broadcast({ t: 'toast', text: 'Office: E = mini-game task · Meeting Room for standups · Shop for furniture' });
+      Office.pushOffice(this);
+    } else if (this.mode === 'pvp') {
       this.say(`${this.teams ? 'Team deathmatch (Red vs Blue)!' : 'Deathmatch!'} ${this.killLimit ? 'First to ' + this.killLimit + ' kills wins' : 'Endless'} on ${this.map.name}. You respawn ${RESPAWN_SECONDS}s after dying. Press Enter to chat.`);
     } else {
       this.say(`Game on! ${this.waves ? this.waves + ' waves' : 'Endless'} on ${this.map.name} (${this.difficulty}). Wave 1 in ${this.timer}s - build your base!`);
@@ -387,8 +408,16 @@ class Room {
     if (this.state !== 'playing') return;
     this.state = 'over';
     this.overT = 14;
-    const stats = [...this.players.values()].map((p) => ({ name: p.name, color: p.color, kills: p.kills, deaths: p.deaths, team: this.teams ? p.team : -1 })).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-    this.lastOver = { t: 'over', result, wave: this.wave, stats, winner: winner ? winner.name : '', winnerId: winner ? winner.id : 0, killLimit: this.killLimit, teams: this.teams, winTeam, teamScore: this.teams ? [this.teamScore(0), this.teamScore(1)] : null };
+    const stats = [...this.players.values()].map((p) => ({
+      name: p.name, color: p.color, kills: p.kills, deaths: p.deaths, team: this.teams ? p.team : -1,
+      role: p.role || '', cash: p.cash | 0,
+    })).sort((a, b) => (this.mode === 'office' ? (b.cash - a.cash) : (b.kills - a.kills || a.deaths - b.deaths)));
+    this.lastOver = {
+      t: 'over', result, wave: this.mode === 'office' ? this.sprintN : this.wave, stats,
+      winner: winner ? winner.name : '', winnerId: winner ? winner.id : 0, killLimit: this.killLimit,
+      teams: this.teams, winTeam, teamScore: this.teams ? [this.teamScore(0), this.teamScore(1)] : null,
+      company: this.mode === 'office' ? this.company : undefined,
+    };
     this.broadcast(this.lastOver);
     this.sendRoom();
   }
@@ -470,6 +499,14 @@ class Room {
   }
   act(p, k) {
     if (this.state !== 'playing' || p.dead) return;
+    if (this.mode === 'office') {
+      if (k === 'equip') {
+        const err = Office.interact(this, p);
+        if (err && p.conn && !p.bot) p.conn.send({ t: 'toast', text: err });
+        Office.pushOffice(this);
+      }
+      return;
+    }
     if (k === 'equip') {
       let best = null, bd = PICK_R * PICK_R;
       for (const g of this.ground) {
@@ -739,6 +776,7 @@ class Room {
     return out.reverse();
   }
   botThink(p) {
+    if (this.mode === 'office') return; // AI interns run in Office.tickOffice
     const ai = p.ai, sk = BOT_SKILL[this.difficulty] || BOT_SKILL.normal;
     ai.pathT -= DT; ai.strafeT -= DT; ai.errT -= DT; ai.healT = (ai.healT || 0) - DT;
     if (ai.errT <= 0) { ai.errT = 0.35 + rand() * 0.3; ai.aimErr = (rand() - 0.5) * 2 * sk.err; }
@@ -844,6 +882,7 @@ class Room {
     if (this.state !== 'playing') return;
     this.tickN++;
     const pvp = this.mode === 'pvp';
+    const office = this.mode === 'office';
     for (const p of [...this.players.values()]) {
       if (p.dead) {
         if (pvp && (p.rs -= DT) <= 0) this.respawn(p);
@@ -854,16 +893,18 @@ class Room {
       if (p.boostT > 0) p.boostT -= DT;
       if (p.dashT > 0) p.dashT -= DT; // (rolling: no shooting)
       else p.stam = Math.min(STAM_MAX, p.stam + (STAM_MAX / DASH_CD) * DT);
-      this.autoPickup(p);
+      if (!office) this.autoPickup(p);
       if (p.nadeCd > 0) p.nadeCd -= DT;
       if (p.lock > 0) { p.lock -= DT; if (p.lock <= 0) { p.lock = 0; p.heat = 0; } } else if (p.heat > 0 && !(p.shoot && this.weapon(p.weapon).heat)) p.heat = Math.max(0, p.heat - 0.3 * DT);
       if (p.bot && this.tickN % 6 === 0) for (const i of this.doorIdx) if (!this.doorOpen.has(i) && (((i % this.W) + 0.5) - p.x) ** 2 + (((i / this.W | 0) + 0.5) - p.y) ** 2 < 2.6) { this.setDoorGroup(p, i, true, true); break; }
-      if (p.bot) this.botThink(p);
+      if (p.bot && !office) this.botThink(p);
       p.cd -= DT;
-      if (p.shoot && p.cd <= 0 && !(p.dashT > 0) && !(p.lock > 0) && this.state === 'playing') this.fire(p);
+      if (!office && p.shoot && p.cd <= 0 && !(p.dashT > 0) && !(p.lock > 0) && this.state === 'playing') this.fire(p);
     }
     if (this.state !== 'playing') { this.ev = []; return; }
-    if (pvp) {
+    if (office) {
+      Office.tickOffice(this, DT);
+    } else if (pvp) {
       if ((this.pvpT -= DT) <= 0) { this.pvpT = PVP_ITEM_EVERY; this.spawnMapItems(false); }
     } else {
       this.updateWave();
@@ -871,13 +912,14 @@ class Room {
       this.updateGraves();
       this.updateGear();
     }
-    if (this.state === 'playing') this.updateBurn();
-    if (this.state === 'playing') this.updateNades();
+    if (!office && this.state === 'playing') this.updateBurn();
+    if (!office && this.state === 'playing') this.updateNades();
     for (let i = this.ground.length - 1; i >= 0; i--) {
       const g = this.ground[i];
       if (g.ttl && (g.ttl -= DT) <= 0) { this.ground.splice(i, 1); this.gver++; }
     }
     if (this.state === 'playing') this.sendSnapshot();
+    if (office && this.state === 'playing' && this.tickN % 20 === 0) Office.pushOffice(this);
     this.ev = [];
   }
 

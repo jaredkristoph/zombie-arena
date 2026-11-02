@@ -77,6 +77,10 @@ function handle(m) {
     case 'chat': addChat(m); break;
     case 'toast': toast(m.text); break;
     case 'err': toast(m.msg); break;
+    case 'office': onOffice(m); break;
+    case 'minigame': startMinigame(m); break;
+    case 'minigame_end': endMinigame(m); break;
+    case 'office_shop': openShop(m); break;
     case 'dd': S.ddCount = (S.ddCount || 0) + 1; readout(); if (m.id !== S.id) { // scripted dash: simulate it locally from the start point, same speed and walls as the server
       W3.startRoll(m.id);
       if (![m.x, m.y, m.dx, m.dy].every(Number.isFinite)) break; // (an older server only sends the id: the roll alone is still shown)
@@ -185,8 +189,9 @@ function renderRooms() {
     const meta = document.createElement('div'); meta.className = 'meta';
     const b = document.createElement('b'); b.textContent = r.name;
     const sm = document.createElement('small');
-    const goal = r.mode === 'pvp' ? (r.killLimit ? 'first to ' + r.killLimit : 'endless') : (r.waves ? r.waves + ' waves' : 'endless');
-    sm.textContent = `${r.mode === 'pvp' ? (r.teams ? 'PvP Teams' : 'PvP') : 'Co-op'} · ${r.map} · ${goal} · ${r.difficulty} · ${r.count}/${r.max}${r.state !== 'lobby' ? ' · in progress' : ''}`;
+    const modeLabel = r.mode === 'pvp' ? (r.teams ? 'PvP Teams' : 'PvP') : r.mode === 'office' ? 'Office' : 'Co-op';
+    const goal = r.mode === 'pvp' ? (r.killLimit ? 'first to ' + r.killLimit : 'endless') : r.mode === 'office' ? '5 sprints' : (r.waves ? r.waves + ' waves' : 'endless');
+    sm.textContent = `${modeLabel} · ${r.map} · ${goal} · ${r.difficulty} · ${r.count}/${r.max}${r.state !== 'lobby' ? ' · in progress' : ''}`;
     meta.append(b, sm);
     const btn = document.createElement('button'); btn.textContent = 'Join'; btn.disabled = r.count >= r.max;
     btn.onclick = () => { ensureName(); send({ t: 'join', room: r.id }); };
@@ -203,9 +208,10 @@ function onRoom(m) {
     const me0 = m.players.find((p) => p.id === S.id);
     if (me0 && me0.color !== S.myColor) { S.myColor = me0.color; refreshPreview(); }
     const pvp = m.room.mode === 'pvp';
+    const office = m.room.mode === 'office';
     const host = m.room.host === S.id;
-    const goal = pvp ? (m.room.killLimit ? 'first to ' + m.room.killLimit + ' kills' : 'endless') : (m.room.waves ? m.room.waves + ' waves' : 'endless');
-    $('r-info').textContent = `${pvp ? (m.room.teams ? 'Team deathmatch (Red vs Blue)' : 'PvP deathmatch') : 'Co-op survival'} · ${m.room.map} · ${goal} · ${pvp ? 'bot skill: ' : ''}${m.room.difficulty} · ${m.players.length}/${m.room.max} players${pvp && m.room.drops ? ' · item drops on death' : ''}`;
+    const goal = pvp ? (m.room.killLimit ? 'first to ' + m.room.killLimit + ' kills' : 'endless') : office ? 'survive 5 sprints' : (m.room.waves ? m.room.waves + ' waves' : 'endless');
+    $('r-info').textContent = `${pvp ? (m.room.teams ? 'Team deathmatch (Red vs Blue)' : 'PvP deathmatch') : office ? 'Office life (peaceful mini-games)' : 'Co-op survival'} · ${m.room.map} · ${goal} · ${pvp ? 'bot skill: ' : ''}${m.room.difficulty} · ${m.players.length}/${m.room.max} players${pvp && m.room.drops ? ' · item drops on death' : ''}${office && m.room.company != null ? ' · company $' + m.room.company : ''}`;
     const pl = $('r-players'); pl.innerHTML = '';
     const teamed = !!m.room.teams;
     const ordered = teamed ? m.players.slice().sort((a, b) => a.team - b.team) : m.players;
@@ -215,7 +221,8 @@ function onRoom(m) {
     for (const p of ordered) {
       const c = document.createElement('div'); c.className = 'chip' + (p.bot ? ' bot' : '');
       const dot = document.createElement('i'); dot.style.background = p.color;
-      const n = document.createElement('span'); n.textContent = (teamed ? (p.team ? '[Blue] ' : '[Red] ') : '') + p.name + (p.id === m.room.host ? ' (host)' : '') + (p.id === S.id ? ' (you)' : '');
+      const roleTag = office && p.role ? ' [' + String(p.role).toUpperCase() + ']' : '';
+      const n = document.createElement('span'); n.textContent = (teamed ? (p.team ? '[Blue] ' : '[Red] ') : '') + p.name + roleTag + (p.id === m.room.host ? ' (host)' : '') + (p.id === S.id ? ' (you)' : '');
       c.append(dot, n);
       if (p.bot && host) {
         const x = document.createElement('button'); x.textContent = '✕'; x.title = 'Remove bot';
@@ -224,29 +231,62 @@ function onRoom(m) {
       }
       pl.appendChild(c);
     }
-    $('r-bots').style.display = host && pvp ? 'flex' : 'none';
+    renderRolePicker(m);
+    $('r-bots').style.display = host && (pvp || office) ? 'flex' : 'none';
+    $('btn-addbot').textContent = office ? '+ Add AI intern' : '+ Add bot';
     $('btn-addbot').disabled = m.players.length >= m.room.max;
     $('btn-start').style.display = host ? 'block' : 'none';
     $('r-wait').textContent = host
-      ? (pvp ? 'You are the host. Add bots to fill the arena, then start. Chat below!' : 'You are the host. Start when everyone is in. Chat below!')
+      ? (pvp ? 'You are the host. Add bots to fill the arena, then start. Chat below!' : office ? 'Pick roles, add AI interns if you want, then start. Chat below!' : 'You are the host. Start when everyone is in. Chat below!')
       : 'Waiting for the host to start...';
+  }
+}
+function renderRolePicker(m) {
+  const box = $('r-roles');
+  const list = $('r-role-list');
+  if (!box || !list) return;
+  const office = m.room && m.room.mode === 'office';
+  box.style.display = office ? 'block' : 'none';
+  if (!office) return;
+  const roles = m.roles || [{ id: 'ceo', name: 'CEO', pay: 200 }, { id: 'dev', name: 'Dev', pay: 150 }, { id: 'tester', name: 'Tester', pay: 140 }, { id: 'hr', name: 'HR', pay: 130 }, { id: 'intern', name: 'Intern', pay: 80 }];
+  const mine = (m.players || []).find((p) => p.id === S.id);
+  list.innerHTML = '';
+  for (const r of roles) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'role-btn' + (mine && mine.role === r.id ? ' on' : '');
+    b.textContent = r.name + ' · $' + r.pay + '/sprint';
+    b.onclick = () => send({ t: 'setrole', role: r.id });
+    list.appendChild(b);
   }
 }
 $('btn-team').onclick = () => { const me = (S.roster || []).find((p) => p.id === S.id); if (me) send({ t: 'team', team: me.team ? 0 : 1 }); };
 $('btn-create').onclick = () => {
   unlockAudio(); ensureName();
+  const modeVal = $('c-mode').value;
+  const mode = modeVal.startsWith('pvp') ? 'pvp' : modeVal === 'office' ? 'office' : 'coop';
   send({
-    t: 'create', name: $('c-name').value, map: $('c-map').value, mode: $('c-mode').value.startsWith('pvp') ? 'pvp' : 'coop', teams: $('c-mode').value === 'pvp-team', waves: Number($('c-waves').value),
+    t: 'create', name: $('c-name').value, map: mode === 'office' ? 'office-floor' : $('c-map').value, mode, teams: modeVal === 'pvp-team', waves: Number($('c-waves').value),
     kills: Number($('c-kills').value), weapons: selectedWeapons(), start: $('c-start').value, drops: $('c-drop').checked, difficulty: $('c-diff').value, max: Number($('c-max').value),
   });
 };
 function syncModeUi() {
-  const pvp = $('c-mode').value.startsWith('pvp');
-  $('c-waves-l').style.display = pvp ? 'none' : '';
+  const modeVal = $('c-mode').value;
+  const pvp = modeVal.startsWith('pvp');
+  const office = modeVal === 'office';
+  $('c-waves-l').style.display = pvp || office ? 'none' : '';
   $('c-kills-l').style.display = pvp ? '' : 'none';
-  $('c-hint').textContent = pvp ? ($('c-mode').value === 'pvp-team' ? 'Red vs Blue: kills add up for the team, no friendly fire. 0 = endless. ' : '0 kills = endless deathmatch. ') + 'You respawn 10s after dying. Add bots in the room lobby.' : '0 waves = endless survival';
-  $('c-diff-l').textContent = pvp ? 'Bot skill' : 'Difficulty';
+  $('c-hint').textContent = office
+    ? 'Peaceful office: mini-game tasks with random Easy/Normal/Hard. Meeting Room for standups (2+ people). AI interns optional. Survive 5 payroll sprints.'
+    : pvp ? (modeVal === 'pvp-team' ? 'Red vs Blue: kills add up for the team, no friendly fire. 0 = endless. ' : '0 kills = endless deathmatch. ') + 'You respawn 10s after dying. Add bots in the room lobby.'
+    : '0 waves = endless survival';
+  $('c-diff-l').textContent = pvp ? 'Bot skill' : office ? 'Intern skill' : 'Difficulty';
   $('c-drop-l').style.display = pvp ? '' : 'none';
+  const wep = $('c-weapons'); if (wep) wep.parentElement && (wep.style.opacity = office ? '0.35' : '1');
+  if (office) {
+    const sel = $('c-map');
+    if ([...sel.options].some((o) => o.value === 'office-floor')) sel.value = 'office-floor';
+  }
 }
 $('c-mode').onchange = syncModeUi;
 syncModeUi();
@@ -303,9 +343,13 @@ function toast(text) {
 // ---------- game start / stop ----------
 function startGame(m) {
   S.inGame = true; S.map = m.map; S.items = m.items; S.revive = m.revive; S.pickR = m.pickR; S.graveR = m.graveR;
-  S.teams = !!(m.room && m.room.teams); S.mode = m.room && m.room.mode === 'pvp' ? 'pvp' : 'coop'; S.killLimit = (m.room && m.room.killLimit) || 0; S.respawn = m.respawn || 10;
+  S.teams = !!(m.room && m.room.teams); S.mode = m.room && m.room.mode === 'pvp' ? 'pvp' : m.room && m.room.mode === 'office' ? 'office' : 'coop'; S.killLimit = (m.room && m.room.killLimit) || 0; S.respawn = m.respawn || 10;
   S.building = false; S.mouse.down = false; S.sentAim = 1e9; // force the first input to carry our aim
+  S.office = m.office || null;
   document.body.classList.toggle('mode-pvp', S.mode === 'pvp');
+  document.body.classList.toggle('mode-office', S.mode === 'office');
+  endMinigame({ id: S.mg && S.mg.id });
+  closeShop();
   S.grid = makeGrid(m.map);
   for (const i of m.doors || []) setDoorSolid(S.grid, i, true);
   S.snaps = []; S.latest = null; S.pending = []; S.groundList = []; S.graves = []; S.me.init = false; S.me.dead = false; S.seq = 0; S.spec = 0;
@@ -324,6 +368,9 @@ function startGame(m) {
 }
 function leaveGameView() {
   S.inGame = false; S.loop = false;
+  endMinigame({ id: S.mg && S.mg.id });
+  closeShop();
+  document.body.classList.remove('mode-office');
   W3.clearAll();
   clearLabels();
   closeChat();
@@ -332,20 +379,27 @@ function leaveGameView() {
 function clearLabels() { for (const l of labels.values()) l.el.remove(); labels.clear(); }
 function onOver(m) {
   setScreen('over');
+  endMinigame({ id: S.mg && S.mg.id });
+  closeShop();
   const pvp = m.result === 'pvp', ended = m.result === 'ended';
+  const office = m.result === 'office_win' || m.result === 'bankrupt' || (S.mode === 'office');
   const myTeam = ((S.roster || []).find((p) => p.id === S.id) || {}).team;
-  const win = pvp ? (m.teams ? m.winTeam === myTeam : m.winnerId === S.id) : m.result === 'victory';
+  const win = office ? m.result === 'office_win' : pvp ? (m.teams ? m.winTeam === myTeam : m.winnerId === S.id) : m.result === 'victory';
   const t = $('over-title');
-  t.textContent = pvp ? (m.teams ? (win ? 'YOUR TEAM WINS!' : `${m.winTeam ? 'BLUE' : 'RED'} TEAM WINS`) : win ? 'YOU WIN!' : `${(m.winner || '?').toUpperCase()} WINS`) : (win ? 'YOU SURVIVED!' : 'GAME OVER');
+  if (office) t.textContent = m.result === 'bankrupt' ? 'BANKRUPT!' : win ? 'IPO SUCCESS!' : 'GAME ENDED';
+  else t.textContent = pvp ? (m.teams ? (win ? 'YOUR TEAM WINS!' : `${m.winTeam ? 'BLUE' : 'RED'} TEAM WINS`) : win ? 'YOU WIN!' : `${(m.winner || '?').toUpperCase()} WINS`) : (win ? 'YOU SURVIVED!' : 'GAME OVER');
   if (ended) t.textContent = 'GAME ENDED';
   t.className = win ? 'win' : 'lose';
-  $('over-sub').textContent = ended ? 'The host ended the game.' : pvp ? (m.teams && m.teamScore ? `Red ${m.teamScore[0]} - ${m.teamScore[1]} Blue. ` : '') + `Deathmatch over${m.killLimit ? ' - first to ' + m.killLimit + ' kills' : ''}.` : (win ? 'All waves cleared. Nice teamwork!' : `The horde got you on wave ${m.wave}.`);
-  const tb = $('over-stats'); tb.innerHTML = '<tr><th>PLAYER</th><th>KILLS</th><th>DEATHS</th></tr>';
+  $('over-sub').textContent = ended ? 'The host ended the game.' : office
+    ? (m.result === 'bankrupt' ? `The company went under on sprint ${m.wave}. Cash left: $${m.company | 0}.` : win ? `Survived ${m.wave} sprints! Company vault: $${m.company | 0}.` : `Office closed on sprint ${m.wave}.`)
+    : pvp ? (m.teams && m.teamScore ? `Red ${m.teamScore[0]} - ${m.teamScore[1]} Blue. ` : '') + `Deathmatch over${m.killLimit ? ' - first to ' + m.killLimit + ' kills' : ''}.` : (win ? 'All waves cleared. Nice teamwork!' : `The horde got you on wave ${m.wave}.`);
+  const tb = $('over-stats');
+  tb.innerHTML = office ? '<tr><th>PLAYER</th><th>ROLE</th><th>CASH</th></tr>' : '<tr><th>PLAYER</th><th>KILLS</th><th>DEATHS</th></tr>';
   for (const s of m.stats) {
     const r = document.createElement('tr');
     const a = document.createElement('td'); a.textContent = s.name; a.style.color = s.color;
-    const b = document.createElement('td'); b.textContent = s.kills;
-    const c = document.createElement('td'); c.textContent = s.deaths;
+    const b = document.createElement('td'); b.textContent = office ? (s.role || '—') : s.kills;
+    const c = document.createElement('td'); c.textContent = office ? ('$' + (s.cash | 0)) : s.deaths;
     r.append(a, b, c); tb.appendChild(r);
   }
   sfx(win ? 'revive' : 'death');
@@ -632,10 +686,12 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape') {
     if (typing) return;
     if (S.building) { S.building = false; e.preventDefault(); return; }
+    if ($('shop') && $('shop').style.display === 'flex') { closeShop(); e.preventDefault(); return; }
     if (document.body.classList.contains('chat-open')) { closeChat(); e.preventDefault(); return; }
     toggleSettings(); e.preventDefault(); return;
   }
   if (settingsOpen() || !S.inGame || typing) return;
+  if (S.mg && !e.repeat && mgKey(e.code)) { e.preventDefault(); return; }
   if (S.me.dead && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) { if (!e.repeat) cycleSpectate(e.code === 'ArrowLeft' ? -1 : 1); e.preventDefault(); return; }
   if (holdCodes().has(e.code)) {
     keys[e.code] = true; e.preventDefault();
@@ -686,6 +742,7 @@ window.addEventListener('mousedown', (e) => {
   if (e.button === 0) S.mouse.down = true;
   setAimMode('mouse');
   e.preventDefault();
+  if (S.mg && mgKey(code)) return;
   if (S.me.dead) { if (e.button === 0) cycleSpectate(1); return; }
   const action = actionForCode(code);
   if (action && !HOLD_BINDS.has(action)) firePressAction(action);
@@ -911,13 +968,29 @@ function frame(now) {
   // barricade placement preview
   if (S.building && (me.dead || !(me.walls > 0))) S.building = false;
   if (S.building) { const t = buildSpot(); W3.setBuildGhost(t.tx, t.ty, t.ok); if (!prompt) prompt = t.ok ? '[B] place barricade here  (Esc cancel)' : 'Blocked - aim at a free tile  (Esc cancel)'; } else W3.setBuildGhost(null);
+  // office station / shop prompt
+  if (S.mode === 'office' && !me.dead && !prompt && !S.mg && S.office) {
+    const shop = S.office.shop;
+    if (shop && (shop.x + 0.5 - me.vx) ** 2 + (shop.y + 0.5 - me.vy) ** 2 < 2.2 * 2.2) prompt = '[E] Open Office Shop';
+    else {
+      let best = null, bd = 1.7 * 1.7;
+      for (const s of (S.office.stations || [])) {
+        const d = (s.x + 0.5 - me.vx) ** 2 + (s.y + 0.5 - me.vy) ** 2;
+        if (d < bd) { bd = d; best = s; }
+      }
+      if (best) {
+        const labels = { desk: 'Start coding mini-game', qa: 'Start QA mini-game', ceo: 'Start CEO mini-game', hr: 'Start HR mini-game', kitchen: 'Fetch coffee mini-game', mail: 'Deliver mail mini-game', meeting: 'Start meeting (need 2+ people)' };
+        prompt = `[E] ${labels[best.kind] || 'Work here'}`;
+      }
+    }
+  }
   // nearest item prompt
-  if (!me.dead && !prompt) {
+  if (S.mode !== 'office' && !me.dead && !prompt) {
     let best = null, bd = S.pickR * S.pickR;
     for (const g of S.groundList) { if (S.items[g[3]] && ['ammo', 'crate', 'turret', 'barricade', 'mine'].includes(S.items[g[3]].type)) continue; const d = (g[1] - me.vx) ** 2 + (g[2] - me.vy) ** 2; if (d < bd) { bd = d; best = g; } }
     if (best) { const def = S.items[best[3]]; if (def && def.type !== 'ammo') prompt = `[E] ${def.type === 'heal' || def.type === 'grenade' ? 'Pick up' : def.type === 'armor' ? 'Wear' : 'Equip'} ${def.name}${def.weight ? ` (${def.weight} kg, ${Math.round(weaponSpeed(def) * 100)}% speed)` : ''}`; }
   }
-  if (!me.dead && !prompt && S.grid.doors.length) { // a door nearby
+  if (S.mode !== 'office' && !me.dead && !prompt && S.grid.doors.length) { // a door nearby
     let bi = -1, bd2 = 1.9 * 1.9;
     for (const i of S.grid.doors) { const d = ((i % S.grid.w) + 0.5 - me.vx) ** 2 + (Math.floor(i / S.grid.w) + 0.5 - me.vy) ** 2; if (d < bd2) { bd2 = d; bi = i; } }
     if (bi >= 0) prompt = `[E] ${S.grid.solid[bi] ? 'Open' : 'Close'} door`;
@@ -950,7 +1023,12 @@ function frame(now) {
 
 function updateHud(me, myGrave) {
   const w = S.wave;
-  if (S.mode === 'pvp') {
+  if (S.mode === 'office') {
+    const o = S.office || {};
+    const you = o.you || {};
+    setText('wave-title', `SPRINT ${o.sprint || 1} / ${o.of || 5}`);
+    setText('wave-sub', `Payroll in ${o.left | 0}s · Company $${o.company | 0} · You $${you.cash | 0} (${(you.role || 'intern').toUpperCase()})`);
+  } else if (S.mode === 'pvp') {
     if (S.teams) {
       const sc = [0, 0];
       for (const p of S.latest.hud) { const r = S.roster.find((q) => q.id === p[0]); if (r && r.team >= 0) sc[r.team] += p[8]; }
@@ -964,25 +1042,34 @@ function updateHud(me, myGrave) {
   else if (w.n === 0) { setText('wave-title', `PREPARE  ${w.tm}s`); setText('wave-sub', 'Open crates, plant turrets [T], barricades [B], mines [N]'); }
   else { setText('wave-title', `WAVE ${w.n} CLEARED`); setText('wave-sub', `Next wave in ${w.tm}s - revive friends & grab loot`); }
   $('hp-fill').style.width = clamp(me.hp, 0, 100) + '%';
-  $('armor-bar').style.display = me.armor > 0 ? 'block' : 'none';
+  $('armor-bar').style.display = S.mode === 'office' ? 'none' : (me.armor > 0 ? 'block' : 'none');
   $('armor-fill').style.width = clamp(me.armor, 0, 100) + '%';
   $('stam-fill').style.width = clamp(S.stam, 0, STAM_MAX) + '%';
   $('stam-fill').classList.toggle('exh', S.stam < STAM_MAX - 1);
   setText('hp-text', String(Math.max(0, Math.round(me.hp))));
-  const def = S.items[me.weapon] || S.items.pistol;
-  setText('weapon-name', def ? def.name + (def.weight ? ` \u00b7 ${def.weight} kg` : '') : 'Pistol');
-  const melee = !!(def && def.melee);
-  setText('ammo-info', melee ? 'Melee - no ammo needed' : `Ammo ${me.ammo | 0}` + (def && def.heat ? (me.lock ? '  JAMMED - cooling' : `  Heat ${me.heat | 0}%`) : '') + (def && def.ammoCost ? `  (${def.ammoCost} per shell)` : ''));
-  $('ammo-info').classList.toggle('low', !melee && (me.ammo | 0) <= 15);
-  setText('bag-info', [me.bag ? `Heals x${me.bag} [H]` : '', me.nades ? `Grenades x${me.nades} [F]` : '', me.turrets ? `Turrets x${me.turrets} [T]` : '', me.walls ? `Barricades x${me.walls} [B]` : '', me.mines ? `Mines x${me.mines} [N]` : '', (me.turrets || me.walls || me.mines) ? '[X] remove' : ''].filter(Boolean).join('  '));
+  if (S.mode !== 'office') {
+    const def = S.items[me.weapon] || S.items.pistol;
+    setText('weapon-name', def ? def.name + (def.weight ? ` \u00b7 ${def.weight} kg` : '') : 'Pistol');
+    const melee = !!(def && def.melee);
+    setText('ammo-info', melee ? 'Melee - no ammo needed' : `Ammo ${me.ammo | 0}` + (def && def.heat ? (me.lock ? '  JAMMED - cooling' : `  Heat ${me.heat | 0}%`) : '') + (def && def.ammoCost ? `  (${def.ammoCost} per shell)` : ''));
+    $('ammo-info').classList.toggle('low', !melee && (me.ammo | 0) <= 15);
+    setText('bag-info', [me.bag ? `Heals x${me.bag} [H]` : '', me.nades ? `Grenades x${me.nades} [F]` : '', me.turrets ? `Turrets x${me.turrets} [T]` : '', me.walls ? `Barricades x${me.walls} [B]` : '', me.mines ? `Mines x${me.mines} [N]` : '', (me.turrets || me.walls || me.mines) ? '[X] remove' : ''].filter(Boolean).join('  '));
+  }
   // players list
   let html = '';
-  const plist = [...S.latest.hud];
-  if (S.mode === 'pvp') plist.sort((a, b) => b[8] - a[8] || (a[11] || 0) - (b[11] || 0));
-  for (const p of plist) {
-    const info = S.roster.find((r) => r.id === p[0]);
-    const score = S.mode === 'pvp' ? `${p[8]} <span class="kd">/ ${p[11] || 0} D</span>` : `${p[8]} kills`;
-    html += `<div class="pl${p[6] ? ' dead' : ''}${p[0] === S.id ? ' me' : ''}${p[10] ? ' prot' : ''}"><span style="color:${info ? info.color : '#fff'}">${info ? escapeHtml(info.name) : '?'}</span> <small>${score}</small><div class="b"><i style="width:${p[6] ? 0 : p[4]}%"></i></div></div>`;
+  if (S.mode === 'office' && S.office && S.office.players) {
+    const plist = S.office.players.slice().sort((a, b) => (b.cash | 0) - (a.cash | 0));
+    for (const p of plist) {
+      html += `<div class="pl${p.id === S.id ? ' me' : ''}"><span>${escapeHtml(p.name)}${p.bot ? ' · AI' : ''}</span> <small>${escapeHtml((p.role || '').toUpperCase())} · $${p.cash | 0}</small><div class="b"><i style="width:100%"></i></div></div>`;
+    }
+  } else {
+    const plist = [...S.latest.hud];
+    if (S.mode === 'pvp') plist.sort((a, b) => b[8] - a[8] || (a[11] || 0) - (b[11] || 0));
+    for (const p of plist) {
+      const info = S.roster.find((r) => r.id === p[0]);
+      const score = S.mode === 'pvp' ? `${p[8]} <span class="kd">/ ${p[11] || 0} D</span>` : `${p[8]} kills`;
+      html += `<div class="pl${p[6] ? ' dead' : ''}${p[0] === S.id ? ' me' : ''}${p[10] ? ' prot' : ''}"><span style="color:${info ? info.color : '#fff'}">${info ? escapeHtml(info.name) : '?'}</span> <small>${score}</small><div class="b"><i style="width:${p[6] ? 0 : p[4]}%"></i></div></div>`;
+    }
   }
   if (hudCache.pl !== html) { hudCache.pl = html; $('hud-players').innerHTML = html; }
   const db = $('deadbox');
@@ -998,7 +1085,146 @@ function updateHud(me, myGrave) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 
-const BUILD = 'b39'; // shown in the corner so you can check every window runs the same version
+const BUILD = 'b40'; // shown in the corner so you can check every window runs the same version
+
+// ---------- office mini-games + shop ----------
+const KEY_LABEL = { KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D', KeyE: 'E', KeyF: 'F', Space: 'SPC' };
+function onOffice(m) {
+  S.office = m;
+  if (S.mode === 'office' && S.inGame) { /* HUD reads S.office */ }
+}
+function startMinigame(m) {
+  endMinigame({ silent: true });
+  const mg = {
+    id: m.id, kind: m.kind, difficulty: m.difficulty || 'normal', name: m.name, pay: m.pay | 0, secs: m.secs || 5,
+    prompt: m.prompt || '', need: m.need | 0, seq: m.seq || [], target: m.target, window: m.window,
+    choices: m.choices || [], goAt: m.goAt || 3.2, taps: 0, idx: 0, started: performance.now(), done: false,
+  };
+  S.mg = mg;
+  const el = $('mg'); el.style.display = 'flex';
+  setText('mg-title', (m.name || 'Task') + '  ·  $' + mg.pay);
+  const d = $('mg-diff'); d.textContent = (mg.difficulty || '').toUpperCase(); d.className = 'mg-diff ' + mg.difficulty;
+  setText('mg-prompt', m.prompt || '');
+  const body = $('mg-body'); body.innerHTML = '';
+  if (mg.kind === 'tap') {
+    body.innerHTML = `<div class="tap-n">0 / ${mg.need}</div><div class="tiny">Space or click</div>`;
+  } else if (mg.kind === 'sequence') {
+    const keys = document.createElement('div'); keys.className = 'keys';
+    mg.seq.forEach((k, i) => {
+      const s = document.createElement('span'); s.className = 'key' + (i === 0 ? ' next' : ''); s.dataset.i = String(i); s.textContent = KEY_LABEL[k] || k;
+      keys.appendChild(s);
+    });
+    body.appendChild(keys);
+  } else if (mg.kind === 'timing') {
+    body.innerHTML = `<div class="bar-track"><div class="bar-green" style="left:${((mg.target - mg.window) * 100)}%;width:${(mg.window * 2 * 100)}%"></div><div class="bar-needle" id="mg-needle"></div></div><div class="tiny">Space / click in the green</div>`;
+  } else if (mg.kind === 'match') {
+    const wrap = document.createElement('div'); wrap.className = 'choices';
+    for (const c of mg.choices) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = c;
+      b.onclick = () => finishMinigame({ ok: true, choice: c });
+      wrap.appendChild(b);
+    }
+    body.appendChild(wrap);
+  } else if (mg.kind === 'meeting') {
+    body.innerHTML = `<div class="go" id="mg-go">Get ready…</div><div class="tiny">Everyone press Space when it says GO</div>`;
+  }
+  if (S._mgTick) cancelAnimationFrame(S._mgTick);
+  const tick = () => {
+    if (!S.mg || S.mg.id !== mg.id) return;
+    const elapsed = (performance.now() - mg.started) / 1000;
+    const left = Math.max(0, mg.secs - elapsed);
+    setText('mg-timer', left.toFixed(1) + 's left');
+    if (mg.kind === 'timing') {
+      const needle = $('mg-needle');
+      if (needle) needle.style.left = Math.min(100, (elapsed / Math.max(0.01, mg.secs)) * 100) + '%';
+    }
+    if (mg.kind === 'meeting') {
+      const go = $('mg-go');
+      if (go) {
+        if (elapsed < mg.goAt - 0.15) go.textContent = String(Math.ceil(mg.goAt - elapsed));
+        else if (elapsed < mg.goAt + (mg.window || 0.5)) go.textContent = 'GO!';
+        else go.textContent = '…';
+      }
+    }
+    if (elapsed > mg.secs + 0.2 && !mg.done) { finishMinigame({ ok: false }); return; }
+    S._mgTick = requestAnimationFrame(tick);
+  };
+  S._mgTick = requestAnimationFrame(tick);
+}
+function finishMinigame(result) {
+  const mg = S.mg;
+  if (!mg || mg.done) return;
+  mg.done = true;
+  const payload = { t: 'minigame_done', id: mg.id, ok: !!result.ok };
+  if (mg.kind === 'tap') payload.taps = mg.taps;
+  if (mg.kind === 'sequence') payload.seq = mg.seq.slice(0, mg.idx);
+  if (mg.kind === 'timing') payload.at = result.at;
+  if (mg.kind === 'match') payload.choice = result.choice;
+  send(payload);
+  if (mg.kind !== 'meeting') endMinigame({ id: mg.id });
+}
+function endMinigame(m) {
+  if (m && m.silent) { /* skip toast */ }
+  if (S.mg && m && m.id && S.mg.id !== m.id) return;
+  S.mg = null;
+  if (S._mgTick) { cancelAnimationFrame(S._mgTick); S._mgTick = 0; }
+  const el = $('mg'); if (el) el.style.display = 'none';
+}
+function openShop(m) {
+  const el = $('shop'); if (!el) return;
+  el.style.display = 'flex';
+  const box = $('shop-items'); box.innerHTML = '';
+  for (const it of (m.items || [])) {
+    const row = document.createElement('div'); row.className = 'shop-row';
+    const b = document.createElement('b'); b.textContent = it.name + ' · $' + it.cost;
+    row.appendChild(b);
+    const buy = document.createElement('button'); buy.type = 'button'; buy.textContent = 'Buy (you)';
+    buy.onclick = () => { send({ t: 'office_buy', item: it.id, company: false }); };
+    row.appendChild(buy);
+    if (m.company) {
+      const c = document.createElement('button'); c.type = 'button'; c.className = 'ghost'; c.textContent = 'Buy (company)';
+      c.onclick = () => { send({ t: 'office_buy', item: it.id, company: true }); };
+      row.appendChild(c);
+    }
+    box.appendChild(row);
+  }
+}
+function closeShop() { const el = $('shop'); if (el) el.style.display = 'none'; }
+if ($('shop-close')) $('shop-close').onclick = () => closeShop();
+
+function mgKey(code) {
+  const mg = S.mg;
+  if (!mg || mg.done) return false;
+  if (mg.kind === 'tap' && (code === 'Space' || code === 'Mouse0')) {
+    mg.taps += 1;
+    const n = $('mg-body') && $('mg-body').querySelector('.tap-n');
+    if (n) n.textContent = mg.taps + ' / ' + mg.need;
+    if (mg.taps >= mg.need) finishMinigame({ ok: true });
+    return true;
+  }
+  if (mg.kind === 'sequence') {
+    const want = mg.seq[mg.idx];
+    if (code === want) {
+      mg.idx += 1;
+      const keys = $('mg-body').querySelectorAll('.key');
+      keys.forEach((el, i) => { el.classList.toggle('done', i < mg.idx); el.classList.toggle('next', i === mg.idx); });
+      if (mg.idx >= mg.seq.length) finishMinigame({ ok: true });
+    } else if (KEY_LABEL[code]) {
+      finishMinigame({ ok: false });
+    }
+    return true;
+  }
+  if (mg.kind === 'timing' && (code === 'Space' || code === 'Mouse0')) {
+    const at = (performance.now() - mg.started) / 1000 / Math.max(0.01, mg.secs);
+    finishMinigame({ ok: Math.abs(at - mg.target) <= mg.window, at });
+    return true;
+  }
+  if (mg.kind === 'meeting' && (code === 'Space' || code === 'Mouse0')) {
+    finishMinigame({ ok: true });
+    return true;
+  }
+  return mg.kind === 'match'; // block other keys while choosing
+}
 // ---------- settings (gear button, top right; on the menu, in the room lobby and in game) ----------
 S.dashSim = new Map(); S.dashFade = new Map();
 globalThis.__za = S; S.W3 = W3; S.blockedAt = (x, y) => blocked(S.grid, x, y, PLAYER_R); // (debug / tests)

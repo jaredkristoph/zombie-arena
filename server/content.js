@@ -169,7 +169,62 @@ function buildOutpost() {
   return { id: 'outpost', name: 'Outpost (defense)', w, h, tiles: g.map((r) => r.join('')), playerSpawns, zombieSpawns, itemSpawns, builtin: true };
 }
 
-const buildDefaultMaps = () => [buildDeadTown(), buildBunker(), buildOutpost()];
+// Office Floor: peaceful software-company map for office mode (desks, kitchen, HR, CEO, shop)
+function buildOfficeFloor() {
+  const w = 36, h = 28, g = makeGrid(w, h);
+  frame(g, 0, 0, w - 1, h - 1);
+  // open-plan (left)
+  fill(g, 1, 1, 14, 12, '.');
+  fill(g, 1, 1, 14, 1, '#'); fill(g, 1, 12, 14, 12, '#'); fill(g, 1, 1, 1, 12, '#'); fill(g, 14, 1, 14, 12, '#');
+  fill(g, 6, 1, 9, 1, '.'); fill(g, 14, 5, 14, 8, '.');
+  // CEO suite (mid-top)
+  fill(g, 16, 1, 24, 10, '.');
+  fill(g, 16, 1, 24, 1, '#'); fill(g, 16, 10, 24, 10, '#'); fill(g, 16, 1, 16, 10, '#'); fill(g, 24, 1, 24, 10, '#');
+  fill(g, 16, 4, 16, 7, '.'); fill(g, 20, 10, 22, 10, '.');
+  // Meeting Room (top-right) — gather here for standup / board meetings
+  fill(g, 26, 1, 34, 10, '.');
+  fill(g, 26, 1, 34, 1, '#'); fill(g, 26, 10, 34, 10, '#'); fill(g, 26, 1, 26, 10, '#'); fill(g, 34, 1, 34, 10, '#');
+  fill(g, 26, 4, 26, 7, '.'); fill(g, 29, 10, 31, 10, '.');
+  // conference table
+  for (const [x, y] of [[28, 4], [29, 4], [30, 4], [31, 4], [28, 6], [29, 6], [30, 6], [31, 6]]) g[y][x] = 'c';
+  // kitchen (bottom-left)
+  fill(g, 1, 14, 12, 26, '.');
+  fill(g, 1, 14, 12, 14, '#'); fill(g, 1, 26, 12, 26, '#'); fill(g, 1, 14, 1, 26, '#'); fill(g, 12, 14, 12, 26, '#');
+  fill(g, 12, 18, 12, 21, '.'); fill(g, 5, 14, 8, 14, '.');
+  // HR (bottom-mid)
+  fill(g, 14, 14, 24, 26, '.');
+  fill(g, 14, 14, 24, 14, '#'); fill(g, 14, 26, 24, 26, '#'); fill(g, 14, 14, 14, 26, '#'); fill(g, 24, 14, 24, 26, '#');
+  fill(g, 14, 18, 14, 21, '.'); fill(g, 18, 14, 20, 14, '.');
+  // shop / lobby (bottom-right)
+  fill(g, 26, 14, 34, 26, '.');
+  fill(g, 26, 14, 26, 26, '#'); fill(g, 34, 14, 34, 26, '#'); fill(g, 26, 14, 34, 14, '#'); fill(g, 26, 26, 34, 26, '#');
+  fill(g, 26, 18, 26, 21, '.'); fill(g, 29, 14, 31, 14, '.');
+  // hallway joins
+  fill(g, 15, 11, 15, 13, '.'); fill(g, 13, 13, 25, 13, '.');
+  // desks as crates
+  for (const [x, y] of [[3, 3], [5, 3], [7, 3], [9, 3], [3, 6], [5, 6], [7, 6], [9, 6], [3, 9], [5, 9], [7, 9], [9, 9], [18, 3], [20, 3], [4, 17], [6, 17], [17, 17], [19, 17]]) g[y][x] = 'c';
+  const playerSpawns = [pt(4, 11), pt(8, 11), pt(11, 7), pt(18, 8), pt(22, 8), pt(30, 8), pt(8, 20), pt(18, 20), pt(30, 20)];
+  const zombieSpawns = [pt(2, 2), pt(33, 2), pt(2, 25), pt(33, 25)];
+  const itemSpawns = [pt(30, 16, 'random')];
+  const stations = [
+    { x: 3, y: 4, kind: 'desk' }, { x: 5, y: 4, kind: 'desk' }, { x: 7, y: 4, kind: 'desk' }, { x: 9, y: 4, kind: 'desk' },
+    { x: 3, y: 7, kind: 'desk' }, { x: 5, y: 7, kind: 'desk' }, { x: 7, y: 7, kind: 'desk' }, { x: 9, y: 7, kind: 'desk' },
+    { x: 3, y: 10, kind: 'qa' }, { x: 5, y: 10, kind: 'qa' }, { x: 7, y: 10, kind: 'qa' },
+    { x: 19, y: 5, kind: 'ceo' }, { x: 21, y: 5, kind: 'ceo' },
+    { x: 28, y: 5, kind: 'meeting' }, { x: 30, y: 5, kind: 'meeting' }, { x: 29, y: 7, kind: 'meeting' }, { x: 31, y: 7, kind: 'meeting' },
+    { x: 17, y: 18, kind: 'hr' }, { x: 19, y: 18, kind: 'hr' },
+    { x: 5, y: 18, kind: 'kitchen' }, { x: 7, y: 20, kind: 'kitchen' },
+    { x: 30, y: 18, kind: 'mail' }, { x: 28, y: 20, kind: 'mail' },
+  ];
+  const shop = { x: 30, y: 22 };
+  const furnSlots = [pt(11, 4), pt(11, 6), pt(11, 8), pt(28, 16), pt(32, 16), pt(28, 24), pt(32, 24)];
+  return {
+    id: 'office-floor', name: 'Office Floor', w, h, tiles: g.map((r) => r.join('')),
+    playerSpawns, zombieSpawns, itemSpawns, stations, shop, furnSlots, builtin: true, office: true,
+  };
+}
+
+const buildDefaultMaps = () => [buildDeadTown(), buildBunker(), buildOutpost(), buildOfficeFloor()];
 
 // ---------- validators ----------
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24);
@@ -240,7 +295,16 @@ function sanitizeMap(raw) {
   if (!playerSpawns.length) throw new Error('Place at least one player spawn');
   if (!zombieSpawns.length) throw new Error('Place at least one zombie spawn');
   const id = validId(raw.id) ? raw.id : (slug(name) || 'map') + '-' + Math.random().toString(36).slice(2, 6);
-  return { id, name, w, h, tiles, playerSpawns, zombieSpawns, itemSpawns };
+  const out = { id, name, w, h, tiles, playerSpawns, zombieSpawns, itemSpawns };
+  // office-mode extras (kept when present)
+  if (Array.isArray(raw.stations)) {
+    out.stations = raw.stations.filter((s) => s && Number.isInteger(s.x) && Number.isInteger(s.y) && typeof s.kind === 'string')
+      .slice(0, 80).map((s) => ({ x: s.x, y: s.y, kind: String(s.kind).slice(0, 16) }));
+  }
+  if (raw.shop && Number.isInteger(raw.shop.x) && Number.isInteger(raw.shop.y)) out.shop = { x: raw.shop.x, y: raw.shop.y };
+  if (Array.isArray(raw.furnSlots)) out.furnSlots = uniq(raw.furnSlots, 40);
+  if (raw.office) out.office = true;
+  return out;
 }
 
 module.exports = { DEFAULT_ITEMS, buildDefaultMaps, sanitizeMap, sanitizeItem, cleanName };

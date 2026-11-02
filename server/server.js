@@ -7,6 +7,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const { Room, TICK_HZ, DIFF, ACC_COUNT, FIT_COUNT } = require('./game');
+const Office = require('./office');
 const { DEFAULT_ITEMS, buildDefaultMaps, sanitizeMap, sanitizeItem, cleanName } = require('./content');
 
 const PORT = Number(process.env.PORT) || 3000;
@@ -71,6 +72,14 @@ function loadStore() {
     const i = store.maps.findIndex((m) => m.id === 'dead-town' && m.builtin);
     if (i >= 0) store.maps[i] = sanitizeMapKeep(buildDefaultMaps()[0]);
     store.seeded.push('deadtown-v3');
+  }
+  // Office Floor map for peaceful office mode (v2: Meeting Room)
+  if (!store.seeded.includes('office-floor-v2')) {
+    const office = sanitizeMapKeep(buildDefaultMaps().find((m) => m.id === 'office-floor') || buildDefaultMaps()[3]);
+    const at = store.maps.findIndex((m) => m.id === 'office-floor');
+    if (at >= 0) { if (store.maps[at].builtin) store.maps[at] = office; }
+    else store.maps.push(office);
+    store.seeded.push('office-floor-v2');
   }
   // items added in later versions are seeded once into existing data files (and can then be deleted by the admin)
   for (const d of DEFAULT_ITEMS) {
@@ -309,7 +318,7 @@ function onMessage(c, m) {
         takeOver(c, back.room, back.player, back.old);
       } else if (!c.token) c.token = crypto.randomBytes(12).toString('hex');
       liveByToken.set(c.token, c);
-      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b39', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h })), rooms: roomList() });
+      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b40', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h, office: !!x.office })), rooms: roomList() });
       if (back) { back.room.resume(back.player); pushRooms(); return; }
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;
@@ -317,15 +326,19 @@ function onMessage(c, m) {
     case 'create': {
       if (!c.named || c.room) return;
       if (rooms.size >= MAX_ROOMS) return c.send({ t: 'err', msg: 'Server is full, try again later' });
-      const map = store.maps.find((x) => x.id === m.map) || store.maps[0];
+      const mode = m.mode === 'pvp' ? 'pvp' : m.mode === 'office' ? 'office' : 'coop';
+      let map = store.maps.find((x) => x.id === m.map) || store.maps[0];
+      if (mode === 'office') {
+        map = store.maps.find((x) => x.id === 'office-floor') || store.maps.find((x) => x.office) || map;
+      }
       const room = new Room(Math.random().toString(36).slice(2, 7), {
         name: cleanName(m.name, 22) || c.name + "'s room",
         map, items: itemMap(),
         waves: Math.min(99, Math.max(0, Math.round(Number(m.waves)))) || 0,
         difficulty: DIFF[m.difficulty] ? m.difficulty : 'normal',
         maxPlayers: Math.min(20, Math.max(1, Math.round(Number(m.max)) || 4)),
-        mode: m.mode === 'pvp' ? 'pvp' : 'coop',
-        teams: m.mode === 'pvp' && m.teams === true,
+        mode,
+        teams: mode === 'pvp' && m.teams === true,
         allowed: Array.isArray(m.weapons) ? m.weapons.filter((x) => typeof x === 'string').slice(0, 60) : undefined,
         start: typeof m.start === 'string' ? m.start : '',
         deathDrop: m.drops !== false,
@@ -334,6 +347,24 @@ function onMessage(c, m) {
       rooms.set(room.id, room);
       room.join(c);
       pushRooms();
+      return;
+    }
+    case 'setrole': {
+      if (!c.room || !c.player || c.room.mode !== 'office') return;
+      const err = Office.setRole(c.room, c.player, String(m.role || ''));
+      if (err) c.send({ t: 'toast', text: err });
+      else { c.send({ t: 'toast', text: 'Role: ' + (c.player.role || '') }); c.room.sendRoom(); }
+      return;
+    }
+    case 'office_buy': {
+      if (!c.room || !c.player || c.room.mode !== 'office') return;
+      const err = Office.tryBuy(c.room, c.player, String(m.item || ''), !!m.company);
+      if (err) c.send({ t: 'toast', text: err });
+      return;
+    }
+    case 'minigame_done': {
+      if (!c.room || !c.player || c.room.mode !== 'office') return;
+      Office.minigameDone(c.room, c.player, m);
       return;
     }
     case 'join': {

@@ -55,11 +55,27 @@
     <div id="prompt"></div>
     <div id="deadbox"></div>
     <div id="help">WASD / Arrows move &middot; SHIFT dash-roll (1s invincible, 3s cooldown) &middot; MOUSE aim &middot; SPACE / CLICK shoot (limited ammo - grab ammo packs) &middot; E equip / open &amp; close doors &middot; F throw grenade (gatling overheats, launcher has a slow reload, katana makes you run 1.5x) &middot; Co-op: T turret &middot; B barricade &middot; N mine &middot; X remove &middot; Q drop gun &middot; H heal &middot; G drop heal &middot; ENTER chat &middot; M mute</div>
+    <div id="office-help" style="display:none">WASD move &middot; E at your station = mini-game task (random Easy/Normal/Hard) &middot; Meeting Room (top-right): 2+ people + E for standup &middot; E at shop = buy furniture &middot; Survive sprints without bankrupting the company &middot; ENTER chat</div>
     <div id="ping"></div>
     <div id="hurt"></div>
     <div id="headshot">HEADSHOT!</div>
     <div id="hidden-tag">HIDDEN IN BUSH</div>
     <div id="toast"></div>
+    <div id="mg" style="display:none">
+      <div id="mg-card">
+        <div id="mg-head"><span id="mg-title">Task</span><span id="mg-diff" class="mg-diff"></span></div>
+        <div id="mg-prompt"></div>
+        <div id="mg-body"></div>
+        <div id="mg-timer"></div>
+      </div>
+    </div>
+    <div id="shop" style="display:none">
+      <div id="shop-card">
+        <h3>Office Shop</h3>
+        <div id="shop-items"></div>
+        <button type="button" id="shop-close" class="ghost">Close</button>
+      </div>
+    </div>
   </div>
 
   <!-- ===== menu ===== -->
@@ -100,6 +116,7 @@
             <option value="coop" selected>Co-op survival (vs zombies)</option>
             <option value="pvp">PvP deathmatch (free for all)</option>
             <option value="pvp-team">PvP team deathmatch (Red vs Blue)</option>
+            <option value="office">Office life (peaceful · mini-games)</option>
           </select>
         </label>
         <div class="row">
@@ -134,9 +151,14 @@
       <div id="r-info" class="tiny"></div>
       <div id="slot-room" class="char-slot"></div>
       <div id="r-players" class="plist"></div>
+      <div id="r-roles" style="display:none">
+        <h2>Pick your role</h2>
+        <div id="r-role-list" class="role-grid"></div>
+        <div class="tiny">CEO spends company cash. Interns do coffee &amp; mail. Meetings need 2+ people in the Meeting Room.</div>
+      </div>
       <div id="r-teamrow" class="row" style="display:none"><span id="r-team-label"></span><button id="btn-team" class="ghost">Switch team</button></div>
       <div id="r-bots" class="row" style="display:none">
-        <button id="btn-addbot" class="ghost">+ Add bot</button>
+        <button id="btn-addbot" class="ghost">+ Add bot / AI intern</button>
       </div>
       <div class="row">
         <button id="btn-start" class="big">Start game</button>
