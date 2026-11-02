@@ -211,7 +211,11 @@ class Room {
     p.acc = Math.floor(rand() * ACC_COUNT);
     p.fit = Math.floor(rand() * FIT_COUNT);
     p.ai = { path: [], pathT: 0, tgt: null, seeT: 0, strafe: rand() < 0.5 ? 1 : -1, strafeT: 1, dest: null, aimErr: 0, errT: 0, shopT: 0 };
-    if (this.mode === 'office') { p.role = officeRole; Office.initPlayerOffice(this, p); }
+    if (this.mode === 'office') {
+      p.role = officeRole;
+      p._officePaid = false;
+      Office.initPlayerOffice(this, p);
+    }
     this.sendRoom();
     return null;
   }
