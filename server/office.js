@@ -105,7 +105,8 @@ function attachOffice(room) {
 function initPlayerOffice(room, p) {
   const role = ROLES[p.role] || ROLES.intern;
   p.role = role.id;
-  if (p.cash == null) p.cash = role.start;
+  // seed starting cash once (join sets cash:0 before role is known)
+  if (!(p.cash > 0) && !p._officePaid) { p.cash = role.start; p._officePaid = true; }
   p.task = null;
   p.mg = null; // personal mini-game in progress
   p.shoot = false;
@@ -120,6 +121,7 @@ function setRole(room, p, roleId) {
   }
   p.role = roleId;
   p.cash = role.start;
+  p._officePaid = true;
   return null;
 }
 
