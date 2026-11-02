@@ -1,5 +1,5 @@
 'use strict';
-// Peaceful office mode: roles, mini-game tasks (random difficulty), meetings, AI interns.
+// Peaceful office mode: roles, mini-game tasks (random difficulty), meetings, AI staff.
 
 const SPRINT_SEC = 150;
 const SPRINTS_WIN = 5;
@@ -313,7 +313,7 @@ function tickOffice(room, dt) {
 
   // expire personal mini-games
   for (const p of room.players.values()) {
-    if (p.bot) botIntern(room, p, dt);
+    if (p.bot) botStaff(room, p, dt);
     if (p.mg && !p.mg.shared && Date.now() > p.mg.deadline) {
       if (p.conn && !p.bot) p.conn.send({ t: 'minigame_end', id: p.mg.id, ok: 0 });
       finishPersonal(room, p, false);
@@ -361,9 +361,9 @@ function payroll(room) {
   pushOffice(room);
 }
 
-function botIntern(room, p, dt) {
-  if (!p.ai) p.ai = { path: [], pathT: 0 };
-  if (p.role !== 'intern') p.role = 'intern';
+function botStaff(room, p, dt) {
+  if (!p.ai) p.ai = { path: [], pathT: 0, shopT: 0 };
+  const role = ROLES[p.role] || ROLES.intern;
   // finish bot auto tasks first
   if (p.mg && p.mg.botAuto) {
     if (Date.now() > p.mg.started + 1600) {
@@ -375,8 +375,26 @@ function botIntern(room, p, dt) {
   if (p.mg || (room.mg && room.mg.members.includes(p.id))) return;
   const ai = p.ai;
   ai.pathT = (ai.pathT || 0) - dt;
-  // sometimes join meetings if someone is already there
-  if (Math.random() < 0.003 && playersInMeeting(room).length >= 1) {
+  ai.shopT = (ai.shopT || 0) - dt;
+
+  // AI CEO: occasionally buy a cheap plant/desk with company cash if vault is healthy
+  if (role.id === 'ceo' && ai.shopT <= 0 && room.company > 2200 && Math.random() < 0.004) {
+    const cheap = SHOP.filter((s) => s.cost <= 200 && room.company - s.cost >= 1500);
+    if (cheap.length && nearShop(room, p)) {
+      tryBuy(room, p, pick(cheap).id, true);
+      ai.shopT = 25;
+      return;
+    }
+    if (cheap.length && room.officeShop) {
+      goalWalk(room, p, room.officeShop.x + 0.5, room.officeShop.y + 0.5, ai);
+      return;
+    }
+  }
+
+  // CEO prefers starting meetings when 1+ others are already in the room; others join meetings
+  const inMeet = playersInMeeting(room).length;
+  const meetChance = role.id === 'ceo' ? 0.008 : 0.003;
+  if (Math.random() < meetChance && (role.id === 'ceo' ? inMeet >= 1 : inMeet >= 1)) {
     const meet = room.officeStations.find((s) => s.kind === 'meeting');
     if (meet) {
       goalWalk(room, p, meet.x + 0.5, meet.y + 0.5, ai);
@@ -384,7 +402,8 @@ function botIntern(room, p, dt) {
       return;
     }
   }
-  const kinds = (ROLES.intern.tasks.filter((t) => !TASKS[t].meeting)).map((t) => TASKS[t].station);
+
+  const kinds = role.tasks.filter((t) => TASKS[t] && !TASKS[t].meeting).map((t) => TASKS[t].station);
   let goal = nearestStation(room, p, kinds);
   if (!goal) {
     const pool = room.officeStations.filter((s) => kinds.includes(s.kind));
@@ -392,7 +411,7 @@ function botIntern(room, p, dt) {
     goal = pool[Math.floor(Math.random() * pool.length)];
   }
   if ((goal.x + 0.5 - p.x) ** 2 + (goal.y + 0.5 - p.y) ** 2 < 1.3) {
-    const taskKey = ROLES.intern.tasks.find((t) => TASKS[t] && TASKS[t].station === goal.kind);
+    const taskKey = role.tasks.find((t) => TASKS[t] && TASKS[t].station === goal.kind);
     if (!taskKey) return;
     const def = TASKS[taskKey];
     const difficulty = randDiff();

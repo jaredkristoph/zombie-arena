@@ -180,15 +180,26 @@ class Room {
   }
   botCount() { return this.players.size - this.humans(); }
 
-  // ---------- bots (pvp hunters, or office AI interns) ----------
-  addBot(by) {
+  // ---------- bots (pvp hunters, or office AI staff) ----------
+  addBot(by, roleId) {
     if (this.mode !== 'pvp' && this.mode !== 'office') return 'Bots are only available in PvP or Office rooms';
     if (this.state !== 'lobby' || by !== this.hostId) return 'Only the host can add bots from the room lobby';
     if (this.players.size >= this.maxPlayers) return 'Room is full';
     if (this.botCount() >= MAX_BOTS) return 'Too many bots';
+    let officeRole = 'intern';
+    if (this.mode === 'office') {
+      const want = typeof roleId === 'string' ? roleId : 'intern';
+      if (!Office.ROLES[want]) return 'Unknown AI role';
+      if (want === 'ceo') {
+        for (const q of this.players.values()) if (q.role === 'ceo') return 'CEO seat is already taken';
+      }
+      officeRole = want;
+    }
     const used = new Set([...this.players.values()].map((p) => p.name));
     let name = '';
-    const prefix = this.mode === 'office' ? 'Intern ' : 'Bot ';
+    const prefix = this.mode === 'office'
+      ? ((Office.ROLES[officeRole] && Office.ROLES[officeRole].name) || 'AI') + ' '
+      : 'Bot ';
     for (let i = 0; i < 40 && !name; i++) {
       const n = prefix + BOT_NAMES[Math.floor(rand() * BOT_NAMES.length)];
       if (!used.has(n)) name = n;
@@ -199,8 +210,8 @@ class Room {
     p.bot = true;
     p.acc = Math.floor(rand() * ACC_COUNT);
     p.fit = Math.floor(rand() * FIT_COUNT);
-    p.ai = { path: [], pathT: 0, tgt: null, seeT: 0, strafe: rand() < 0.5 ? 1 : -1, strafeT: 1, dest: null, aimErr: 0, errT: 0 };
-    if (this.mode === 'office') { p.role = 'intern'; Office.initPlayerOffice(this, p); }
+    p.ai = { path: [], pathT: 0, tgt: null, seeT: 0, strafe: rand() < 0.5 ? 1 : -1, strafeT: 1, dest: null, aimErr: 0, errT: 0, shopT: 0 };
+    if (this.mode === 'office') { p.role = officeRole; Office.initPlayerOffice(this, p); }
     this.sendRoom();
     return null;
   }

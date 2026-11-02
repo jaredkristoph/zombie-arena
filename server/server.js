@@ -318,7 +318,7 @@ function onMessage(c, m) {
         takeOver(c, back.room, back.player, back.old);
       } else if (!c.token) c.token = crypto.randomBytes(12).toString('hex');
       liveByToken.set(c.token, c);
-      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b40', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h, office: !!x.office })), rooms: roomList() });
+      c.send({ t: 'hello_ok', dash: 1, teams: 1, build: 'b41', token: c.token, resumed: !!back, id: c.id, name: c.name, weapons: store.items.filter((i) => i.type === 'weapon').map((i) => ({ id: i.id, name: i.name, melee: !!i.melee })), maps: store.maps.map((x) => ({ id: x.id, name: x.name, w: x.w, h: x.h, office: !!x.office })), rooms: roomList() });
       if (back) { back.room.resume(back.player); pushRooms(); return; }
       c.send({ t: 'chatlog', msgs: lobbyChat });
       return;
@@ -387,7 +387,7 @@ function onMessage(c, m) {
     case 'team': if (c.room && c.player) c.room.setTeam(c.player, Number(m.team)); return;
     case 'addbot': {
       if (!c.room || !c.player) return;
-      const err = c.room.addBot(c.id);
+      const err = c.room.addBot(c.id, m.role);
       if (err) c.send({ t: 'toast', text: err }); else pushRooms();
       return;
     }

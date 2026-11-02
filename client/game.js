@@ -235,9 +235,16 @@ function onRoom(m) {
     $('r-bots').style.display = host && (pvp || office) ? 'flex' : 'none';
     $('btn-addbot').textContent = office ? '+ Add AI intern' : '+ Add bot';
     $('btn-addbot').disabled = m.players.length >= m.room.max;
+    const ceoTaken = office && m.players.some((p) => p.role === 'ceo');
+    const ceoBtn = $('btn-addceo');
+    if (ceoBtn) {
+      ceoBtn.style.display = office ? '' : 'none';
+      ceoBtn.disabled = m.players.length >= m.room.max || ceoTaken;
+      ceoBtn.textContent = ceoTaken ? 'CEO seat taken' : '+ Add AI CEO';
+    }
     $('btn-start').style.display = host ? 'block' : 'none';
     $('r-wait').textContent = host
-      ? (pvp ? 'You are the host. Add bots to fill the arena, then start. Chat below!' : office ? 'Pick roles, add AI interns if you want, then start. Chat below!' : 'You are the host. Start when everyone is in. Chat below!')
+      ? (pvp ? 'You are the host. Add bots to fill the arena, then start. Chat below!' : office ? 'Pick roles, add AI CEO / interns if you want, then start. Chat below!' : 'You are the host. Start when everyone is in. Chat below!')
       : 'Waiting for the host to start...';
   }
 }
@@ -290,7 +297,8 @@ function syncModeUi() {
 }
 $('c-mode').onchange = syncModeUi;
 syncModeUi();
-$('btn-addbot').onclick = () => send({ t: 'addbot' });
+$('btn-addbot').onclick = () => send({ t: 'addbot', role: S.room && S.room.mode === 'office' ? 'intern' : undefined });
+$('btn-addceo').onclick = () => send({ t: 'addbot', role: 'ceo' });
 $('btn-start').onclick = () => { unlockAudio(); send({ t: 'start' }); };
 $('btn-leave').onclick = () => send({ t: 'leave' });
 $('name').value = localStorage.getItem('za-name') || '';
@@ -1085,7 +1093,7 @@ function updateHud(me, myGrave) {
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 
-const BUILD = 'b40'; // shown in the corner so you can check every window runs the same version
+const BUILD = 'b41'; // shown in the corner so you can check every window runs the same version
 
 // ---------- office mini-games + shop ----------
 const KEY_LABEL = { KeyW: 'W', KeyA: 'A', KeyS: 'S', KeyD: 'D', KeyE: 'E', KeyF: 'F', Space: 'SPC' };
