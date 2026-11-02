@@ -71,7 +71,6 @@ class Room {
     this.mode = cfg.mode === 'pvp' ? 'pvp' : cfg.mode === 'office' ? 'office' : 'coop';
     this.killLimit = Math.max(0, Math.min(200, Math.round(Number(cfg.killLimit)) || 0)); // pvp only, 0 = endless
     this.teams = this.mode === 'pvp' && cfg.teams === true; // team deathmatch: Red vs Blue, no friendly fire
-    if (this.mode === 'office') Office.attachOffice(this);
     this.botSeq = 0;
     this.reviveSeconds = cfg.reviveSeconds || REVIVE_SECONDS;
     this.W = this.map.w;
@@ -86,6 +85,7 @@ class Room {
     this.chatLog = [];
     this.nextId = 1;
     this.resetWorld();
+    if (this.mode === 'office') Office.attachOffice(this);
   }
 
   // ---------- helpers ----------
